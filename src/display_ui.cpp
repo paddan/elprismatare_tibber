@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <math.h>
 #include <OpenFontRender.h>
 #include <TFT_eSPI.h>
 
@@ -45,7 +46,7 @@ void drawPriceText(const String &priceText, uint16_t color) {
     ofr.setFontColor(color, TFT_BLACK);
     ofr.setFontSize(86);
     ofr.setAlignment(Align::MiddleCenter);
-    ofr.setCursor(160, 64);
+    ofr.setCursor(160, 52);
     ofr.printf("%s", priceText.c_str());
     return;
   }
@@ -55,7 +56,7 @@ void drawPriceText(const String &priceText, uint16_t color) {
   tft.setTextColor(color, TFT_BLACK);
   tft.setTextFont(4);
   tft.setTextSize(3);
-  tft.drawString(priceText, 160, 58);
+  tft.drawString(priceText, 160, 46);
   tft.setTextSize(1);
 }
 }  // namespace
@@ -102,10 +103,10 @@ void displayDrawPrices(const PriceState &state) {
 
   if (state.count == 0) return;
 
-  const int chartX = 10;
-  const int chartY = 145;
-  const int chartW = 300;
-  const int chartH = 78;
+  const int chartX = 18;
+  const int chartY = 130;
+  const int chartW = 296;
+  const int chartH = 100;
   tft.drawRect(chartX - 1, chartY - 1, chartW + 2, chartH + 2, TFT_DARKGREY);
   const int xAxisY = chartY + chartH - 1;
   tft.drawFastHLine(chartX, xAxisY, chartW, TFT_DARKGREY);
@@ -117,6 +118,33 @@ void displayDrawPrices(const PriceState &state) {
     if (state.points[i].price > maxPrice) maxPrice = state.points[i].price;
   }
   const float range = max(0.001f, maxPrice - minPrice);
+  const int drawableH = chartH - 4;
+  auto priceToY = [&](float price) -> int {
+    const float normalized = (price - minPrice) / range;
+    return xAxisY - (int)(normalized * drawableH);
+  };
+
+  // Y-axis helpers:
+  // - whole numbers get a label + longer tick
+  // - .5 steps get a short tick
+  const float halfStart = ceilf(minPrice * 2.0f) / 2.0f;
+  const float halfEnd = floorf(maxPrice * 2.0f) / 2.0f;
+  for (float tick = halfStart; tick <= halfEnd + 0.001f; tick += 0.5f) {
+    const int yTick = priceToY(tick);
+    const bool isWhole = fabsf(tick - roundf(tick)) < 0.01f;
+    const int tickLen = isWhole ? 6 : 3;
+    tft.drawFastHLine(chartX - tickLen, yTick, tickLen, TFT_DARKGREY);
+    if (isWhole) {
+      const int labelValue = (int)roundf(tick);
+      char label[8];
+      snprintf(label, sizeof(label), "%d", labelValue);
+      tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+      tft.setTextFont(1);
+      tft.setTextDatum(MR_DATUM);
+      tft.drawString(String(label), chartX - 8, yTick);
+    }
+  }
+  tft.setTextDatum(TL_DATUM);
 
   const int barW = max(2, chartW / (int)state.count);
   const int usedW = barW * (int)state.count;
@@ -128,13 +156,24 @@ void displayDrawPrices(const PriceState &state) {
     const int x = startX + (int)i * barW;
     const int w = max(1, barW - 1);
     const float normalized = (p.price - minPrice) / range;
-    const int h = (int)(normalized * (chartH - 4));
+    const int h = (int)(normalized * drawableH);
     const int y = xAxisY - h;
-    const bool isCurrent = ((int)i == state.currentIndex);
-    const uint16_t barColor = isCurrent ? TFT_WHITE : levelColor(p.level);
+    const uint16_t barColor = levelColor(p.level);
 
     if (h > 0) {
       tft.fillRect(x, y, w, h, barColor);
+    }
+
+    if ((int)i == state.currentIndex) {
+      // Downward arrow head pointing at the current bar.
+      const int cx = x + (w / 2);
+      int tipY = max(chartY + 3, y - 1);
+      int baseY = tipY - 11;
+      if (baseY < chartY + 1) {
+        baseY = chartY + 1;
+        tipY = baseY + 11;
+      }
+      tft.fillTriangle(cx - 3, baseY, cx + 3, baseY, cx, tipY, TFT_WHITE);
     }
 
     if (p.startsAt.length() >= 10) {
@@ -142,8 +181,8 @@ void displayDrawPrices(const PriceState &state) {
       if (day != lastDay) {
         lastDay = day;
         tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-        tft.setTextFont(1);
-        tft.drawString(p.startsAt.substring(8, 10) + "/" + p.startsAt.substring(5, 7), x, chartY - 10);
+        tft.setTextFont(2);
+        tft.drawString(p.startsAt.substring(8, 10) + "/" + p.startsAt.substring(5, 7), x, chartY - 16);
       }
     }
   }

@@ -7,6 +7,15 @@
 #include "tibber_client.h"
 #include "time_utils.h"
 
+namespace {
+float applyCustomPriceFormula(float rawPriceKrPerKwh) {
+  // Apply formula in ore: 1.25 * hourly_price + 84.225, then convert back to kr.
+  const float rawOre = rawPriceKrPerKwh * 100.0f;
+  const float adjustedOre = (1.25f * rawOre) + 84.225f;
+  return adjustedOre / 100.0f;
+}
+}  // namespace
+
 void addPoints(JsonArray arr, PriceState &state) {
   if (arr.isNull()) return;
   for (JsonObject item : arr) {
@@ -14,10 +23,8 @@ void addPoints(JsonArray arr, PriceState &state) {
     PricePoint &p = state.points[state.count++];
     p.startsAt = String((const char *)(item["startsAt"] | ""));
     p.level = String((const char *)(item["level"] | "UNKNOWN"));
-    const float energy = item["energy"] | 0.0f;
-    const float tax = item["tax"] | 0.0f;
-    const float total = item["total"] | 0.0f;
-    p.price = (energy + tax) > 0.0f ? (energy + tax) : total;
+    const float rawPrice = item["energy"] | 0.0f;
+    p.price = applyCustomPriceFormula(rawPrice);
   }
 }
 
@@ -48,8 +55,8 @@ PriceState fetchPriceInfo(const char *apiToken, const char *graphQlUrl) {
   http.addHeader("Authorization", "Bearer " + String(apiToken));
 
   static const char kBody[] =
-      "{\"query\":\"{viewer{homes{currentSubscription{priceInfo{current{total energy tax startsAt "
-      "currency level} today{total energy tax startsAt level} tomorrow{total energy tax startsAt "
+      "{\"query\":\"{viewer{homes{currentSubscription{priceInfo{current{energy startsAt "
+      "currency level} today{energy startsAt level} tomorrow{energy startsAt "
       "level}}}}}}\"}";
 
   const int status = http.POST(String(kBody));
@@ -83,10 +90,8 @@ PriceState fetchPriceInfo(const char *apiToken, const char *graphQlUrl) {
   out.currency = String((const char *)(current["currency"] | "SEK"));
   out.currentStartsAt = String((const char *)(current["startsAt"] | ""));
   out.currentLevel = String((const char *)(current["level"] | "UNKNOWN"));
-  const float currentEnergy = current["energy"] | 0.0f;
-  const float currentTax = current["tax"] | 0.0f;
-  const float currentTotal = current["total"] | 0.0f;
-  out.currentPrice = (currentEnergy + currentTax) > 0.0f ? (currentEnergy + currentTax) : currentTotal;
+  const float rawCurrentPrice = current["energy"] | 0.0f;
+  out.currentPrice = applyCustomPriceFormula(rawCurrentPrice);
 
   addPoints(doc["data"]["viewer"]["homes"][0]["currentSubscription"]["priceInfo"]["today"], out);
   addPoints(doc["data"]["viewer"]["homes"][0]["currentSubscription"]["priceInfo"]["tomorrow"], out);
