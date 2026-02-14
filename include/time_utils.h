@@ -3,7 +3,6 @@
 #include <Arduino.h>
 #include <time.h>
 
-String formatStartsAt(const String &iso);
 String hourKeyFromIso(const String &iso);
 String currentHourKey();
 void syncClock(const char *timezoneSpec);

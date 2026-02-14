@@ -5,7 +5,7 @@ ESP32 + 2.4" TFT electricity price display for Tibber.
 This project runs on a FireBeetle ESP32 and shows:
 - Current price as large text (`#.## kr`) with color based on Tibber level.
 - Hourly price bars for today + tomorrow.
-- Current hour bar in white.
+- Current hour with a white downward arrow marker.
 
 ## Hardware
 
@@ -48,6 +48,7 @@ platformio device monitor -b 115200
 - Refreshes hourly state from local clock.
 - Fetches full price data again daily at 13:00 local time.
 - Retries every 30 seconds on fetch failure.
+- Applies custom price calculation: `1.25 * energy + 0.84225` (kr/kWh).
 
 ## Project Structure
 

@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <WiFi.h>
+#include <math.h>
 #include <time.h>
 
 #include "app_types.h"
@@ -17,9 +18,11 @@
 
 constexpr uint32_t kWifiConnectTimeoutMs = 20000;
 constexpr uint32_t kRetryOnErrorMs = 30000;
+constexpr time_t kRetryDailyIfUnchangedSec = 10 * 60;
 constexpr char kTibberGraphQlUrl[] = "https://api.tibber.com/v1-beta/gql";
 constexpr char kTimezoneSpec[] = "CET-1CEST,M3.5.0/2,M10.5.0/3";
 constexpr bool kTokenMissing = (sizeof(TIBBER_API_TOKEN) <= 1);
+constexpr time_t kValidEpochMin = 1700000000;
 
 PriceState gState;
 uint32_t gLastFetchMs = 0;
@@ -37,9 +40,14 @@ void logNextFetch(time_t nextFetch)
   logf("Next daily fetch scheduled: %s", buf);
 }
 
-void scheduleDailyFetch()
+bool hasValidClock(time_t now)
 {
-  gNextDailyFetch = scheduleNextDailyFetch(time(nullptr), 13, 0);
+  return now > kValidEpochMin;
+}
+
+void scheduleDailyFetch(time_t now)
+{
+  gNextDailyFetch = scheduleNextDailyFetch(now, 13, 0);
   logNextFetch(gNextDailyFetch);
 }
 
@@ -66,6 +74,28 @@ void fetchAndRender()
   logf("Fetch+render start");
   applyFetchedState(fetchPriceInfo(TIBBER_API_TOKEN, kTibberGraphQlUrl));
   logf("Fetch+render done");
+}
+
+bool isSamePoint(const PricePoint &lhs, const PricePoint &rhs)
+{
+  return lhs.startsAt == rhs.startsAt && lhs.level == rhs.level && fabsf(lhs.price - rhs.price) < 0.0005f;
+}
+
+bool hasNewPriceInfo(const PriceState &fetched, const PriceState &current)
+{
+  if (!fetched.ok || fetched.count == 0)
+    return false;
+  if (!current.ok || current.count == 0)
+    return true;
+  if (fetched.count != current.count)
+    return true;
+
+  for (size_t i = 0; i < fetched.count; ++i)
+  {
+    if (!isSamePoint(fetched.points[i], current.points[i]))
+      return true;
+  }
+  return false;
 }
 
 void updateCurrentHourFromClock()
@@ -97,6 +127,48 @@ void updateCurrentHourFromClock()
   displayDrawPrices(gState);
 }
 
+void handleClockDrivenUpdates(time_t now)
+{
+  if (!hasValidClock(now))
+    return;
+
+  const uint32_t minuteTick = (uint32_t)(now / 60);
+  if (minuteTick != gLastMinuteTick)
+  {
+    gLastMinuteTick = minuteTick;
+    updateCurrentHourFromClock();
+  }
+
+  if (gNextDailyFetch == 0)
+    scheduleDailyFetch(now);
+
+  if (gNextDailyFetch != 0 && now >= gNextDailyFetch)
+  {
+    logf("Daily 13:00 fetch trigger");
+    const PriceState fetched = fetchPriceInfo(TIBBER_API_TOKEN, kTibberGraphQlUrl);
+    if (!fetched.ok)
+    {
+      logf("Daily fetch failed, retry in %ld sec", (long)kRetryDailyIfUnchangedSec);
+      applyFetchedState(fetched);
+      gNextDailyFetch = now + kRetryDailyIfUnchangedSec;
+      logNextFetch(gNextDailyFetch);
+      return;
+    }
+
+    if (hasNewPriceInfo(fetched, gState))
+    {
+      logf("Daily fetch returned updated prices");
+      applyFetchedState(fetched);
+      scheduleDailyFetch(now);
+      return;
+    }
+
+    logf("Daily fetch unchanged, retry in %ld sec", (long)kRetryDailyIfUnchangedSec);
+    gNextDailyFetch = now + kRetryDailyIfUnchangedSec;
+    logNextFetch(gNextDailyFetch);
+  }
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -104,7 +176,6 @@ void setup()
   logf("Boot");
 
   displayInit();
-  displayDrawStaticUi();
 
   if (kTokenMissing)
   {
@@ -123,7 +194,7 @@ void setup()
   }
 
   syncClock(kTimezoneSpec);
-  scheduleDailyFetch();
+  scheduleDailyFetch(time(nullptr));
   fetchAndRender();
 }
 
@@ -140,22 +211,5 @@ void loop()
     fetchAndRender();
   }
 
-  if (time(nullptr) > 1700000000)
-  {
-    const uint32_t minuteTick = (uint32_t)(time(nullptr) / 60);
-    if (minuteTick != gLastMinuteTick)
-    {
-      gLastMinuteTick = minuteTick;
-      updateCurrentHourFromClock();
-    }
-
-    if (gNextDailyFetch == 0)
-      scheduleDailyFetch();
-    if (gNextDailyFetch != 0 && time(nullptr) >= gNextDailyFetch)
-    {
-      logf("Daily 13:00 fetch trigger");
-      fetchAndRender();
-      scheduleDailyFetch();
-    }
-  }
+  handleClockDrivenUpdates(time(nullptr));
 }

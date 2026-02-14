@@ -14,6 +14,32 @@ float applyCustomPriceFormula(float rawPriceKrPerKwh) {
   const float adjustedOre = (1.25f * rawOre) + 84.225f;
   return adjustedOre / 100.0f;
 }
+
+constexpr uint32_t kHttpTimeoutMs = 10000;
+
+static const char kPriceInfoQueryBody[] =
+    "{\"query\":\"{viewer{homes{currentSubscription{priceInfo{current{energy startsAt currency "
+    "level} today{energy startsAt level} tomorrow{energy startsAt level}}}}}}\"}";
+
+JsonObject getPriceInfoNode(JsonDocument &doc) {
+  return doc["data"]["viewer"]["homes"][0]["currentSubscription"]["priceInfo"];
+}
+
+int findCurrentIndex(const PriceState &state, const String &currentStartsAt) {
+  for (size_t i = 0; i < state.count; ++i) {
+    if (state.points[i].startsAt == currentStartsAt) {
+      return (int)i;
+    }
+  }
+
+  const String key = currentHourKey();
+  for (size_t i = 0; i < state.count; ++i) {
+    if (hourKeyFromIso(state.points[i].startsAt) == key) {
+      return (int)i;
+    }
+  }
+  return -1;
+}
 }  // namespace
 
 void addPoints(JsonArray arr, PriceState &state) {
@@ -44,8 +70,8 @@ PriceState fetchPriceInfo(const char *apiToken, const char *graphQlUrl) {
   WiFiClientSecure client;
   client.setInsecure();
   HTTPClient http;
-  http.setConnectTimeout(10000);
-  http.setTimeout(10000);
+  http.setConnectTimeout(kHttpTimeoutMs);
+  http.setTimeout(kHttpTimeoutMs);
   if (!http.begin(client, graphQlUrl)) {
     out.error = "HTTP begin failed";
     return out;
@@ -54,12 +80,7 @@ PriceState fetchPriceInfo(const char *apiToken, const char *graphQlUrl) {
   http.addHeader("Content-Type", "application/json");
   http.addHeader("Authorization", "Bearer " + String(apiToken));
 
-  static const char kBody[] =
-      "{\"query\":\"{viewer{homes{currentSubscription{priceInfo{current{energy startsAt "
-      "currency level} today{energy startsAt level} tomorrow{energy startsAt "
-      "level}}}}}}\"}";
-
-  const int status = http.POST(String(kBody));
+  const int status = http.POST(String(kPriceInfoQueryBody));
   logf("Tibber POST status=%d", status);
   if (status != 200) {
     out.error = status <= 0 ? "HTTP POST failed" : ("HTTP " + String(status));
@@ -81,7 +102,13 @@ PriceState fetchPriceInfo(const char *apiToken, const char *graphQlUrl) {
     return out;
   }
 
-  JsonObject current = doc["data"]["viewer"]["homes"][0]["currentSubscription"]["priceInfo"]["current"];
+  JsonObject priceInfo = getPriceInfoNode(doc);
+  if (priceInfo.isNull()) {
+    out.error = "No price info";
+    return out;
+  }
+
+  JsonObject current = priceInfo["current"];
   if (current.isNull()) {
     out.error = "No current tariff";
     return out;
@@ -93,31 +120,15 @@ PriceState fetchPriceInfo(const char *apiToken, const char *graphQlUrl) {
   const float rawCurrentPrice = current["energy"] | 0.0f;
   out.currentPrice = applyCustomPriceFormula(rawCurrentPrice);
 
-  addPoints(doc["data"]["viewer"]["homes"][0]["currentSubscription"]["priceInfo"]["today"], out);
-  addPoints(doc["data"]["viewer"]["homes"][0]["currentSubscription"]["priceInfo"]["tomorrow"], out);
+  addPoints(priceInfo["today"], out);
+  addPoints(priceInfo["tomorrow"], out);
 
   if (out.count == 0) {
     out.error = "No hourly prices";
     return out;
   }
 
-  out.currentIndex = -1;
-  for (size_t i = 0; i < out.count; ++i) {
-    if (out.points[i].startsAt == out.currentStartsAt) {
-      out.currentIndex = (int)i;
-      break;
-    }
-  }
-
-  if (out.currentIndex < 0) {
-    const String key = currentHourKey();
-    for (size_t i = 0; i < out.count; ++i) {
-      if (hourKeyFromIso(out.points[i].startsAt) == key) {
-        out.currentIndex = (int)i;
-        break;
-      }
-    }
-  }
+  out.currentIndex = findCurrentIndex(out, out.currentStartsAt);
 
   out.ok = true;
   logf(

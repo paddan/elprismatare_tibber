@@ -2,18 +2,6 @@
 
 #include "logging_utils.h"
 
-String formatStartsAt(const String &iso) {
-  if (
-      iso.length() >= 16 &&
-      iso.charAt(4) == '-' &&
-      iso.charAt(7) == '-' &&
-      iso.charAt(10) == 'T'
-  ) {
-    return iso.substring(8, 10) + "/" + iso.substring(5, 7) + " - " + iso.substring(11, 16);
-  }
-  return iso;
-}
-
 String hourKeyFromIso(const String &iso) {
   if (iso.length() >= 13) return iso.substring(0, 13);
   return "";
