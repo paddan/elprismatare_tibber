@@ -1,10 +1,15 @@
 #include <Arduino.h>
+#include <OpenFontRender.h>
 #include <TFT_eSPI.h>
 
+#include "NotoSans_Bold.h"
 #include "display_ui.h"
+#include "logging_utils.h"
 
 namespace {
 TFT_eSPI tft;
+OpenFontRender ofr;
+bool gOpenFontReady = false;
 
 String formatPrice(float value) {
   char buf[24];
@@ -13,11 +18,11 @@ String formatPrice(float value) {
 }
 
 uint16_t levelColor(const String &level) {
-  if (level == "VERY_CHEAP") return TFT_GREENYELLOW;
-  if (level == "CHEAP") return TFT_GREEN;
+  // Requested grouping:
+  // LOW -> green, NORMAL -> yellow, HIGH -> red.
+  if (level == "HIGH" || level == "VERY_EXPENSIVE" || level == "EXPENSIVE") return TFT_RED;
   if (level == "NORMAL") return TFT_YELLOW;
-  if (level == "EXPENSIVE") return TFT_ORANGE;
-  if (level == "VERY_EXPENSIVE") return TFT_RED;
+  if (level == "LOW" || level == "VERY_CHEAP" || level == "CHEAP") return TFT_GREEN;
   return TFT_WHITE;
 }
 
@@ -34,6 +39,25 @@ void hardResetController() {
 #endif
 #endif
 }
+
+void drawPriceText(const String &priceText, uint16_t color) {
+  if (gOpenFontReady) {
+    ofr.setFontColor(color, TFT_BLACK);
+    ofr.setFontSize(86);
+    ofr.setAlignment(Align::MiddleCenter);
+    ofr.setCursor(160, 64);
+    ofr.printf("%s", priceText.c_str());
+    return;
+  }
+
+  // Fallback if smooth font is unavailable.
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(color, TFT_BLACK);
+  tft.setTextFont(4);
+  tft.setTextSize(3);
+  tft.drawString(priceText, 160, 58);
+  tft.setTextSize(1);
+}
 }  // namespace
 
 void displayInit() {
@@ -44,6 +68,10 @@ void displayInit() {
   tft.writecommand(0x29);  // DISPON
   delay(20);
   tft.setRotation(1);
+  ofr.setDrawer(tft);
+  ofr.setBackgroundFillMethod(BgFillMethod::Block);
+  gOpenFontReady = (ofr.loadFont(NotoSans_Bold, sizeof(NotoSans_Bold)) == 0);
+  logf("Display OpenFontRender: %s", gOpenFontReady ? "ready" : "fallback");
 }
 
 void displayDrawStaticUi() {
@@ -69,11 +97,7 @@ void displayDrawPrices(const PriceState &state) {
   const String priceText = formatPrice(state.currentPrice);
   const uint16_t priceColor = levelColor(state.currentLevel);
 
-  tft.setTextColor(priceColor, TFT_BLACK);
-  tft.setTextFont(4);
-  tft.setTextSize(3);
-  tft.drawString(priceText, 160, 58);
-  tft.setTextSize(1);
+  drawPriceText(priceText, priceColor);
   tft.setTextDatum(TL_DATUM);
 
   if (state.count == 0) return;
