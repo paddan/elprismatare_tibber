@@ -20,6 +20,8 @@
 constexpr uint32_t kWifiConnectTimeoutMs = 20000;
 constexpr uint32_t kRetryOnErrorMs = 30000;
 constexpr time_t kRetryDailyIfUnchangedSec = 10 * 60;
+constexpr int kDailyFetchHour = 13;
+constexpr int kDailyFetchMinute = 0;
 constexpr char kNordPoolApiUrl[] = "https://dataportal-api.nordpoolgroup.com/api/DayAheadPriceIndices";
 constexpr char kTimezoneSpec[] = "CET-1CEST,M3.5.0/2,M10.5.0/3";
 constexpr time_t kValidEpochMin = 1700000000;
@@ -36,6 +38,8 @@ PriceState gState;
 uint32_t gLastFetchMs = 0;
 time_t gNextDailyFetch = 0;
 uint32_t gLastMinuteTick = 0;
+bool gPendingCatchUpRecheck = false;
+bool gNeedsOnlineInit = false;
 
 const char *activeSourceLabel()
 {
@@ -60,8 +64,73 @@ bool hasValidClock(time_t now)
 
 void scheduleDailyFetch(time_t now)
 {
-  gNextDailyFetch = scheduleNextDailyFetch(now, 13, 0);
+  gNextDailyFetch = scheduleNextDailyFetch(now, kDailyFetchHour, kDailyFetchMinute);
   logNextFetch(gNextDailyFetch);
+}
+
+String dateKeyFromTime(time_t when)
+{
+  if (!hasValidClock(when))
+    return "";
+
+  struct tm localTm;
+  localtime_r(&when, &localTm);
+  char key[11];
+  strftime(key, sizeof(key), "%Y-%m-%d", &localTm);
+  return String(key);
+}
+
+bool stateContainsDate(const PriceState &state, const String &dateKey)
+{
+  if (!state.ok || state.count == 0 || dateKey.length() != 10)
+    return false;
+
+  for (size_t i = 0; i < state.count; ++i)
+  {
+    if (state.points[i].startsAt.length() < 10)
+      continue;
+    if (state.points[i].startsAt.substring(0, 10) == dateKey)
+      return true;
+  }
+  return false;
+}
+
+bool shouldCatchUpMissedDailyUpdate(time_t now, const PriceState &state)
+{
+  if (!hasValidClock(now))
+    return false;
+
+  struct tm tmToday;
+  localtime_r(&now, &tmToday);
+  tmToday.tm_hour = kDailyFetchHour;
+  tmToday.tm_min = kDailyFetchMinute;
+  tmToday.tm_sec = 0;
+  const time_t todayFetchTime = mktime(&tmToday);
+  if (todayFetchTime == (time_t)-1 || now < todayFetchTime)
+    return false;
+
+  struct tm tmTomorrow = tmToday;
+  tmTomorrow.tm_mday += 1;
+  tmTomorrow.tm_hour = 0;
+  tmTomorrow.tm_min = 0;
+  tmTomorrow.tm_sec = 0;
+  const time_t tomorrow = mktime(&tmTomorrow);
+  if (!hasValidClock(tomorrow))
+    return false;
+
+  const String tomorrowDate = dateKeyFromTime(tomorrow);
+  if (tomorrowDate.isEmpty())
+    return false;
+
+  const bool hasTomorrow = stateContainsDate(state, tomorrowDate);
+  if (!hasTomorrow)
+  {
+    logf("After %02d:%02d and cache is missing %s, catch-up fetch needed",
+         kDailyFetchHour,
+         kDailyFetchMinute,
+         tomorrowDate.c_str());
+  }
+  return !hasTomorrow;
 }
 
 void applyFetchedState(const PriceState &fetched)
@@ -181,6 +250,16 @@ void handleClockDrivenUpdates(time_t now)
   if (!hasValidClock(now))
     return;
 
+  if (gPendingCatchUpRecheck)
+  {
+    gPendingCatchUpRecheck = false;
+    if (shouldCatchUpMissedDailyUpdate(now, gState))
+    {
+      gNextDailyFetch = now;
+      logf("Delayed catch-up fetch scheduled immediately");
+    }
+  }
+
   const uint32_t minuteTick = (uint32_t)(now / 60);
   if (minuteTick != gLastMinuteTick)
   {
@@ -238,19 +317,35 @@ void setup()
 
   displayInit();
 
-  if (!wifiConnect(WIFI_SSID, WIFI_PASSWORD, kWifiConnectTimeoutMs))
+  bool loadedFromCache = false;
+  PriceState cached;
+  const bool wifiConnected = wifiConnect(WIFI_SSID, WIFI_PASSWORD, kWifiConnectTimeoutMs);
+
+  if (!wifiConnected)
   {
+    if (priceCacheLoadIfAvailable(activeSourceLabel(), cached))
+    {
+      nordPoolPreupdateMovingAverageFromPriceInfo(cached);
+      gState = cached;
+      gState.source = "no wifi";
+      displayDrawPrices(gState);
+      logf("No WiFi at boot, loaded prices from cache: points=%u", (unsigned)gState.count);
+      gNeedsOnlineInit = true;
+      return;
+    }
+
     gState.ok = false;
-    gState.source = activeSourceLabel();
-    gState.error = "WiFi timeout";
+    gState.source = "no wifi";
+    gState.error = "no wifi";
     displayDrawPrices(gState);
+    gNeedsOnlineInit = true;
     return;
   }
 
   syncClock(kTimezoneSpec);
-  scheduleDailyFetch(time(nullptr));
+  const time_t nowAfterSync = time(nullptr);
+  scheduleDailyFetch(nowAfterSync);
 
-  PriceState cached;
   if (priceCacheLoadIfCurrent(activeSourceLabel(), cached))
   {
     nordPoolPreupdateMovingAverageFromPriceInfo(cached);
@@ -261,17 +356,56 @@ void setup()
     }
     displayDrawPrices(gState);
     logf("Loaded current prices from cache: points=%u", (unsigned)gState.count);
-    return;
+    loadedFromCache = true;
+    gPendingCatchUpRecheck = true;
   }
 
-  fetchAndRender();
+  if (!loadedFromCache)
+  {
+    fetchAndRender();
+  }
+
+  const time_t now = time(nullptr);
+  if (loadedFromCache && shouldCatchUpMissedDailyUpdate(now, gState))
+  {
+    gNextDailyFetch = now;
+    logf("Startup catch-up fetch scheduled immediately");
+    gPendingCatchUpRecheck = false;
+  }
 }
 
 void loop()
 {
   if (WiFi.status() != WL_CONNECTED && !wifiConnect(WIFI_SSID, WIFI_PASSWORD, kWifiConnectTimeoutMs))
   {
+    if (gState.ok)
+    {
+      if (gState.source != "no wifi")
+      {
+        gState.source = "no wifi";
+        displayDrawPrices(gState);
+      }
+    }
+    else
+    {
+      const bool needsRedraw = gState.source != "no wifi" || gState.error != "no wifi";
+      gState.source = "no wifi";
+      gState.error = "no wifi";
+      if (needsRedraw)
+      {
+        displayDrawPrices(gState);
+      }
+    }
     return;
+  }
+
+  if (gNeedsOnlineInit && WiFi.status() == WL_CONNECTED)
+  {
+    logf("WiFi restored, running online init");
+    gNeedsOnlineInit = false;
+    syncClock(kTimezoneSpec);
+    scheduleDailyFetch(time(nullptr));
+    fetchAndRender();
   }
 
   if (!gState.ok && millis() - gLastFetchMs >= kRetryOnErrorMs)

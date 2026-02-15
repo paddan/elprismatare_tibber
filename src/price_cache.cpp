@@ -42,44 +42,8 @@ void applyCurrentFromIndex(PriceState &state, int idx) {
   state.currentLevel = state.points[idx].level;
   state.currentPrice = state.points[idx].price;
 }
-}  // namespace
 
-bool priceCacheSave(const PriceState &state) {
-  if (!state.ok || state.count == 0) return false;
-  if (!ensureSpiffsMounted()) return false;
-
-  JsonDocument doc;
-  doc["version"] = kCacheVersion;
-  doc["source"] = state.source;
-  doc["currency"] = state.currency;
-  doc["hasRunningAverage"] = state.hasRunningAverage;
-  doc["runningAverage"] = state.runningAverage;
-
-  JsonArray points = doc["points"].to<JsonArray>();
-  for (size_t i = 0; i < state.count; ++i) {
-    JsonObject item = points.add<JsonObject>();
-    item["startsAt"] = state.points[i].startsAt;
-    item["level"] = state.points[i].level;
-    item["price"] = state.points[i].price;
-  }
-
-  File file = SPIFFS.open(kCachePath, FILE_WRITE);
-  if (!file) {
-    logf("Price cache save failed: open");
-    return false;
-  }
-
-  if (serializeJson(doc, file) == 0) {
-    file.close();
-    logf("Price cache save failed: serialize");
-    return false;
-  }
-  file.flush();
-  file.close();
-  return true;
-}
-
-bool priceCacheLoadIfCurrent(const char *expectedSource, PriceState &out) {
+bool priceCacheLoadInternal(const char *expectedSource, bool requireCurrentHour, PriceState &out) {
   out = PriceState();
   if (!ensureSpiffsMounted()) return false;
 
@@ -123,13 +87,60 @@ bool priceCacheLoadIfCurrent(const char *expectedSource, PriceState &out) {
 
   if (out.count == 0) return false;
 
-  const int idx = findCurrentIndex(out);
+  int idx = findCurrentIndex(out);
   if (idx < 0) {
-    // Cache exists but does not cover current hour.
-    return false;
+    if (requireCurrentHour) {
+      // Cache exists but does not cover current hour.
+      return false;
+    }
+    idx = 0;
   }
 
   applyCurrentFromIndex(out, idx);
   out.ok = true;
   return true;
+}
+}  // namespace
+
+bool priceCacheSave(const PriceState &state) {
+  if (!state.ok || state.count == 0) return false;
+  if (!ensureSpiffsMounted()) return false;
+
+  JsonDocument doc;
+  doc["version"] = kCacheVersion;
+  doc["source"] = state.source;
+  doc["currency"] = state.currency;
+  doc["hasRunningAverage"] = state.hasRunningAverage;
+  doc["runningAverage"] = state.runningAverage;
+
+  JsonArray points = doc["points"].to<JsonArray>();
+  for (size_t i = 0; i < state.count; ++i) {
+    JsonObject item = points.add<JsonObject>();
+    item["startsAt"] = state.points[i].startsAt;
+    item["level"] = state.points[i].level;
+    item["price"] = state.points[i].price;
+  }
+
+  File file = SPIFFS.open(kCachePath, FILE_WRITE);
+  if (!file) {
+    logf("Price cache save failed: open");
+    return false;
+  }
+
+  if (serializeJson(doc, file) == 0) {
+    file.close();
+    logf("Price cache save failed: serialize");
+    return false;
+  }
+  file.flush();
+  file.close();
+  return true;
+}
+
+bool priceCacheLoadIfCurrent(const char *expectedSource, PriceState &out) {
+  return priceCacheLoadInternal(expectedSource, true, out);
+}
+
+bool priceCacheLoadIfAvailable(const char *expectedSource, PriceState &out) {
+  return priceCacheLoadInternal(expectedSource, false, out);
 }
