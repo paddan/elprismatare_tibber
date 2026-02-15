@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <math.h>
+#include <stdint.h>
 #include <OpenFontRender.h>
 #include <TFT_eSPI.h>
 
@@ -113,6 +114,150 @@ namespace
     float maxPrice = 1.0f;
     float span = 1.0f;
   };
+
+  struct Rgb
+  {
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+
+    Rgb() : r(0), g(0), b(0) {}
+    Rgb(uint8_t rr, uint8_t gg, uint8_t bb) : r(rr), g(gg), b(bb) {}
+  };
+
+  struct LevelBand
+  {
+    bool has = false;
+    float minPrice = 0.0f;
+    float maxPrice = 0.0f;
+  };
+
+  static const Rgb kLevelColors[] = {
+      Rgb(170, 255, 170),  // VERY_CHEAP / LOW
+      Rgb(96, 210, 110),   // CHEAP
+      Rgb(245, 190, 70),   // NORMAL
+      Rgb(185, 55, 35),    // EXPENSIVE / HIGH
+      Rgb(100, 0, 0),      // VERY_EXPENSIVE
+  };
+
+  int levelRank(const String &level)
+  {
+    if (level == "VERY_CHEAP" || level == "LOW")
+      return 0;
+    if (level == "CHEAP")
+      return 1;
+    if (level == "NORMAL")
+      return 2;
+    if (level == "EXPENSIVE" || level == "HIGH")
+      return 3;
+    if (level == "VERY_EXPENSIVE")
+      return 4;
+    return -1;
+  }
+
+  uint8_t lerpU8(uint8_t a, uint8_t b, float t)
+  {
+    if (t <= 0.0f)
+      return a;
+    if (t >= 1.0f)
+      return b;
+    const float af = (float)a;
+    const float bf = (float)b;
+    int value = (int)lroundf(af + ((bf - af) * t));
+    if (value < 0)
+      value = 0;
+    if (value > 255)
+      value = 255;
+    return (uint8_t)value;
+  }
+
+  uint16_t lerpRgb565(const Rgb &from, const Rgb &to, float t)
+  {
+    const uint8_t r = lerpU8(from.r, to.r, t);
+    const uint8_t g = lerpU8(from.g, to.g, t);
+    const uint8_t b = lerpU8(from.b, to.b, t);
+    return tft.color565(r, g, b);
+  }
+
+  Rgb lerpRgb(const Rgb &from, const Rgb &to, float t)
+  {
+    return Rgb(lerpU8(from.r, to.r, t), lerpU8(from.g, to.g, t), lerpU8(from.b, to.b, t));
+  }
+
+  float clamp01(float v)
+  {
+    if (v < 0.0f)
+      return 0.0f;
+    if (v > 1.0f)
+      return 1.0f;
+    return v;
+  }
+
+  void computeLevelBands(const PriceState &state, LevelBand bands[5])
+  {
+    for (size_t i = 0; i < state.count; ++i)
+    {
+      const int rank = levelRank(state.points[i].level);
+      if (rank < 0 || rank > 4)
+        continue;
+
+      LevelBand &band = bands[rank];
+      if (!band.has)
+      {
+        band.has = true;
+        band.minPrice = state.points[i].price;
+        band.maxPrice = state.points[i].price;
+        continue;
+      }
+      if (state.points[i].price < band.minPrice)
+        band.minPrice = state.points[i].price;
+      if (state.points[i].price > band.maxPrice)
+        band.maxPrice = state.points[i].price;
+    }
+  }
+
+  uint16_t barGradientColor(const PricePoint &point, const LevelBand bands[5], const ChartRange &range)
+  {
+    const int rank = levelRank(point.level);
+    if (rank < 0 || rank > 4 || !bands[rank].has)
+    {
+      // Fallback to global gradient if level is unknown.
+      const float t = clamp01((point.price - range.minPrice) / range.span);
+      constexpr int kSegments = (int)(sizeof(kLevelColors) / sizeof(kLevelColors[0])) - 1;
+      const float scaled = t * (float)kSegments;
+      int idx = (int)floorf(scaled);
+      if (idx < 0)
+        idx = 0;
+      if (idx >= kSegments)
+        idx = kSegments - 1;
+      const float localT = scaled - (float)idx;
+      return lerpRgb565(kLevelColors[idx], kLevelColors[idx + 1], localT);
+    }
+
+    const LevelBand &band = bands[rank];
+    const float span = band.maxPrice - band.minPrice;
+    if (span < 0.001f)
+      return tft.color565(kLevelColors[rank].r, kLevelColors[rank].g, kLevelColors[rank].b);
+    const float t = clamp01((point.price - band.minPrice) / span);
+
+    // Keep color anchored in current level hue.
+    // Only shift toward neighboring level hues when those levels are present.
+    Rgb lowSide = kLevelColors[rank];
+    Rgb highSide = kLevelColors[rank];
+    constexpr float kLowerShift = 0.70f;
+    constexpr float kHigherShift = 0.45f;
+
+    if (rank > 0 && bands[rank - 1].has)
+    {
+      lowSide = lerpRgb(kLevelColors[rank], kLevelColors[rank - 1], kLowerShift);
+    }
+    if (rank < 4 && bands[rank + 1].has)
+    {
+      highSide = lerpRgb(kLevelColors[rank], kLevelColors[rank + 1], kHigherShift);
+    }
+
+    return lerpRgb565(lowSide, highSide, t);
+  }
 
   ChartRange computeChartRange(const PriceState &state)
   {
@@ -231,7 +376,7 @@ namespace
         kCurrentArrowColor);
   }
 
-  void drawBars(const PriceState &state, const ChartRange &range, int xAxisY, int drawableH)
+  void drawBars(const PriceState &state, const ChartRange &range, const LevelBand bands[5], int xAxisY, int drawableH)
   {
     String lastDay = "";
     const int pointCount = (int)state.count;
@@ -247,7 +392,7 @@ namespace
 
       if (h > 0)
       {
-        tft.fillRect(x, y, w, h, levelColor(p.level));
+        tft.fillRect(x, y, w, h, barGradientColor(p, bands, range));
       }
 
       if ((int)i == state.currentIndex)
@@ -298,18 +443,29 @@ void displayDrawPrices(const PriceState &state)
     return;
   }
 
-  drawPriceText(formatPrice(state.currentPrice), levelColor(state.currentLevel));
-  tft.setTextDatum(TL_DATUM);
-
   if (state.count == 0)
+  {
+    drawPriceText(formatPrice(state.currentPrice), levelColor(state.currentLevel));
+    tft.setTextDatum(TL_DATUM);
     return;
+  }
 
   const int xAxisY = kChartY + kChartH - 1;
   const int drawableH = kChartH - 4;
   const ChartRange range = computeChartRange(state);
+  LevelBand bands[5];
+  computeLevelBands(state, bands);
+
+  uint16_t currentPriceColor = levelColor(state.currentLevel);
+  if (state.currentIndex >= 0 && state.currentIndex < (int)state.count)
+  {
+    currentPriceColor = barGradientColor(state.points[state.currentIndex], bands, range);
+  }
+  drawPriceText(formatPrice(state.currentPrice), currentPriceColor);
+  tft.setTextDatum(TL_DATUM);
 
   tft.drawRect(kChartX - 1, kChartY - 1, kChartW + 2, kChartH + 2, TFT_DARKGREY);
   tft.drawFastHLine(kChartX, xAxisY, kChartW, TFT_DARKGREY);
   drawYAxis(range, xAxisY, drawableH);
-  drawBars(state, range, xAxisY, drawableH);
+  drawBars(state, range, bands, xAxisY, drawableH);
 }
