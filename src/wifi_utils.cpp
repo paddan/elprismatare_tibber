@@ -12,8 +12,10 @@ namespace {
 constexpr char kPrefsNamespace[] = "elcfg";
 constexpr char kAreaKey[] = "np_area";
 constexpr char kCurrencyKey[] = "np_curr";
+constexpr char kResolutionKey[] = "np_res";
 constexpr char kDefaultNordpoolArea[] = "SE3";
 constexpr char kDefaultNordpoolCurrency[] = "SEK";
+constexpr uint16_t kDefaultNordpoolResolutionMinutes = 60;
 constexpr const char *kNordpoolAreas[] = {
     "SE1", "SE2", "SE3", "SE4", "NO1", "NO2", "NO3", "NO4", "NO5",
     "DK1", "DK2", "FI",  "EE",  "LV",  "LT",  "SYS"};
@@ -22,6 +24,7 @@ constexpr size_t kNordpoolAreaCount = sizeof(kNordpoolAreas) / sizeof(kNordpoolA
 constexpr size_t kNordpoolCurrencyCount = sizeof(kNordpoolCurrencies) / sizeof(kNordpoolCurrencies[0]);
 constexpr size_t kAreaMaxLen = 8;
 constexpr size_t kCurrencyMaxLen = 8;
+constexpr size_t kResolutionMaxLen = 4;
 constexpr uint32_t kReconnectCooldownMs = 5000;
 
 bool gSaveConfigRequested = false;
@@ -32,6 +35,7 @@ constexpr char kPortalCustomHead[] PROGMEM = R"HTML(
 (function () {
   var areaOptions = ["SE1","SE2","SE3","SE4","NO1","NO2","NO3","NO4","NO5","DK1","DK2","FI","EE","LV","LT","SYS"];
   var currencyOptions = ["SEK","EUR","NOK","DKK"];
+  var resolutionOptions = ["15","30","60"];
 
   function replaceInputWithSelect(inputId, options) {
     var input = document.getElementById(inputId);
@@ -68,10 +72,18 @@ constexpr char kPortalCustomHead[] PROGMEM = R"HTML(
   window.addEventListener("load", function () {
     replaceInputWithSelect("NordPoolArea", areaOptions);
     replaceInputWithSelect("NordPoolCurrency", currencyOptions);
+    replaceInputWithSelect("NordPoolResolution", resolutionOptions);
   });
 })();
 </script>
 )HTML";
+
+uint16_t normalizeResolutionMinutes(uint16_t value) {
+  if (value == 15 || value == 30 || value == 60) {
+    return value;
+  }
+  return kDefaultNordpoolResolutionMinutes;
+}
 
 bool isAllowedToken(const String &value, const char *const *allowedValues, size_t allowedCount) {
   for (size_t i = 0; i < allowedCount; ++i) {
@@ -102,6 +114,12 @@ String normalizeToken(
   return value;
 }
 
+uint16_t parseResolutionToken(const String &value) {
+  String parsed = value;
+  parsed.trim();
+  return normalizeResolutionMinutes((uint16_t)parsed.toInt());
+}
+
 void normalizeSecrets(AppSecrets &secrets) {
   secrets.nordpoolArea =
       normalizeToken(secrets.nordpoolArea, kDefaultNordpoolArea, kAreaMaxLen, kNordpoolAreas, kNordpoolAreaCount);
@@ -111,6 +129,7 @@ void normalizeSecrets(AppSecrets &secrets) {
       kCurrencyMaxLen,
       kNordpoolCurrencies,
       kNordpoolCurrencyCount);
+  secrets.nordpoolResolutionMinutes = normalizeResolutionMinutes(secrets.nordpoolResolutionMinutes);
 }
 
 void saveConfigCallback() {
@@ -133,8 +152,13 @@ void saveSecretsToPrefs(const AppSecrets &secrets) {
   }
   prefs.putString(kAreaKey, secrets.nordpoolArea);
   prefs.putString(kCurrencyKey, secrets.nordpoolCurrency);
+  prefs.putUShort(kResolutionKey, secrets.nordpoolResolutionMinutes);
   prefs.end();
-  logf("Secrets saved: area=%s currency=%s", secrets.nordpoolArea.c_str(), secrets.nordpoolCurrency.c_str());
+  logf(
+      "Secrets saved: area=%s currency=%s resolution=%u",
+      secrets.nordpoolArea.c_str(),
+      secrets.nordpoolCurrency.c_str(),
+      (unsigned)secrets.nordpoolResolutionMinutes);
 }
 
 }  // namespace
@@ -142,11 +166,13 @@ void saveSecretsToPrefs(const AppSecrets &secrets) {
 void loadAppSecrets(AppSecrets &out) {
   out.nordpoolArea = kDefaultNordpoolArea;
   out.nordpoolCurrency = kDefaultNordpoolCurrency;
+  out.nordpoolResolutionMinutes = kDefaultNordpoolResolutionMinutes;
 
   Preferences prefs;
   if (prefs.begin(kPrefsNamespace, true)) {
     out.nordpoolArea = prefs.getString(kAreaKey, out.nordpoolArea);
     out.nordpoolCurrency = prefs.getString(kCurrencyKey, out.nordpoolCurrency);
+    out.nordpoolResolutionMinutes = prefs.getUShort(kResolutionKey, out.nordpoolResolutionMinutes);
     prefs.end();
   }
 
@@ -163,16 +189,24 @@ bool wifiConnectWithConfigPortal(AppSecrets &secrets, uint16_t portalTimeoutSeco
 
   char areaBuffer[kAreaMaxLen + 1];
   char currencyBuffer[kCurrencyMaxLen + 1];
+  char resolutionBuffer[kResolutionMaxLen + 1];
   secrets.nordpoolArea.toCharArray(areaBuffer, sizeof(areaBuffer));
   secrets.nordpoolCurrency.toCharArray(currencyBuffer, sizeof(currencyBuffer));
+  snprintf(resolutionBuffer, sizeof(resolutionBuffer), "%u", (unsigned)secrets.nordpoolResolutionMinutes);
 
   WiFiManager wifiManager;
   WiFiManagerParameter areaParam("NordPoolArea", "Nord Pool area:", areaBuffer, sizeof(areaBuffer));
   WiFiManagerParameter currencyParam("NordPoolCurrency", "currency:", currencyBuffer, sizeof(currencyBuffer));
+  WiFiManagerParameter resolutionParam(
+      "NordPoolResolution",
+      "Resolution (minutes):",
+      resolutionBuffer,
+      sizeof(resolutionBuffer));
 
   gSaveConfigRequested = false;
   wifiManager.addParameter(&areaParam);
   wifiManager.addParameter(&currencyParam);
+  wifiManager.addParameter(&resolutionParam);
   wifiManager.setConfigPortalTimeout(portalTimeoutSeconds);
   wifiManager.setSaveConfigCallback(saveConfigCallback);
   wifiManager.setCustomHeadElement(kPortalCustomHead);
@@ -198,6 +232,7 @@ bool wifiConnectWithConfigPortal(AppSecrets &secrets, uint16_t portalTimeoutSeco
   if (gSaveConfigRequested) {
     secrets.nordpoolArea = String(areaParam.getValue());
     secrets.nordpoolCurrency = String(currencyParam.getValue());
+    secrets.nordpoolResolutionMinutes = parseResolutionToken(String(resolutionParam.getValue()));
     normalizeSecrets(secrets);
     saveSecretsToPrefs(secrets);
     gSaveConfigRequested = false;
@@ -205,11 +240,12 @@ bool wifiConnectWithConfigPortal(AppSecrets &secrets, uint16_t portalTimeoutSeco
     normalizeSecrets(secrets);
   }
 
-  logf("WiFi connected: ssid='%s' ip=%s area=%s currency=%s",
+  logf("WiFi connected: ssid='%s' ip=%s area=%s currency=%s resolution=%u",
        WiFi.SSID().c_str(),
        WiFi.localIP().toString().c_str(),
        secrets.nordpoolArea.c_str(),
-       secrets.nordpoolCurrency.c_str());
+       secrets.nordpoolCurrency.c_str(),
+       (unsigned)secrets.nordpoolResolutionMinutes);
   return true;
 }
 

@@ -5,5 +5,7 @@
 
 String hourKeyFromIso(const String &iso);
 String currentHourKey();
+String intervalKeyFromIso(const String &iso, uint16_t resolutionMinutes);
+String currentIntervalKey(uint16_t resolutionMinutes);
 void syncClock(const char *timezoneSpec);
 time_t scheduleNextDailyFetch(time_t now, int hour, int minute);

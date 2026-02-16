@@ -6,6 +6,7 @@
 struct AppSecrets {
   String nordpoolArea;
   String nordpoolCurrency;
+  uint16_t nordpoolResolutionMinutes = 60;
 };
 
 void loadAppSecrets(AppSecrets &out);

@@ -2,19 +2,57 @@
 
 #include "logging_utils.h"
 
+namespace {
+uint16_t normalizeResolutionMinutes(uint16_t resolutionMinutes) {
+  if (resolutionMinutes == 15 || resolutionMinutes == 30 || resolutionMinutes == 60) {
+    return resolutionMinutes;
+  }
+  return 60;
+}
+}  // namespace
+
+String intervalKeyFromIso(const String &iso, uint16_t resolutionMinutes) {
+  if (iso.length() < 13) return "";
+
+  const uint16_t normalizedResolution = normalizeResolutionMinutes(resolutionMinutes);
+  if (normalizedResolution >= 60 || iso.length() < 16) {
+    return iso.substring(0, 13);
+  }
+
+  const int minute = iso.substring(14, 16).toInt();
+  const int slotMinute = minute - (minute % normalizedResolution);
+  const String hourPrefix = iso.substring(0, 13);
+  char key[20];
+  snprintf(key, sizeof(key), "%s:%02d", hourPrefix.c_str(), slotMinute);
+  return String(key);
+}
+
+String currentIntervalKey(uint16_t resolutionMinutes) {
+  time_t now = time(nullptr);
+  if (now < 1700000000) return "";
+
+  struct tm localTm;
+  localtime_r(&now, &localTm);
+
+  const uint16_t normalizedResolution = normalizeResolutionMinutes(resolutionMinutes);
+  const int slotMinute = localTm.tm_min - (localTm.tm_min % normalizedResolution);
+  char key[20];
+  if (normalizedResolution >= 60) {
+    strftime(key, sizeof(key), "%Y-%m-%dT%H", &localTm);
+  } else {
+    char hourPrefix[20];
+    strftime(hourPrefix, sizeof(hourPrefix), "%Y-%m-%dT%H", &localTm);
+    snprintf(key, sizeof(key), "%s:%02d", hourPrefix, slotMinute);
+  }
+  return String(key);
+}
+
 String hourKeyFromIso(const String &iso) {
-  if (iso.length() >= 13) return iso.substring(0, 13);
-  return "";
+  return intervalKeyFromIso(iso, 60);
 }
 
 String currentHourKey() {
-  time_t now = time(nullptr);
-  if (now < 1700000000) return "";
-  struct tm localTm;
-  localtime_r(&now, &localTm);
-  char key[20];
-  strftime(key, sizeof(key), "%Y-%m-%dT%H", &localTm);
-  return String(key);
+  return currentIntervalKey(60);
 }
 
 void syncClock(const char *timezoneSpec) {

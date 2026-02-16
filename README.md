@@ -4,8 +4,8 @@ ESP32 + 2.4" TFT electricity price display for Nord Pool.
 
 This project runs on a FireBeetle ESP32 and shows:
 - Current price as large text (`#.## kr`) with color based on price level.
-- Hourly price bars for today + tomorrow.
-- Current hour with a white downward arrow marker.
+- Price bars for today + tomorrow at 15/30/60-minute resolution.
+- Current interval with a white downward arrow marker.
 
 ## Hardware
 
@@ -29,6 +29,7 @@ On boot, the device uses a WiFiManager portal to configure:
 - Wi-Fi credentials
 - `NORDPOOL_AREA` (dropdown): `SE1`, `SE2`, `SE3`, `SE4`, `NO1`, `NO2`, `NO3`, `NO4`, `NO5`, `DK1`, `DK2`, `FI`, `EE`, `LV`, `LT`, `SYS`
 - `NORDPOOL_CURRENCY` (dropdown): `SEK`, `EUR`, `NOK`, `DKK`
+- `NORDPOOL_RESOLUTION_MINUTES` (dropdown): `15`, `30`, `60`
 
 Runtime configuration is persisted in NVS and reused on future boots.
 
@@ -53,7 +54,7 @@ platformio device monitor -b 115200
 - While the portal is active, the TFT shows setup instructions (AP name + `192.168.4.1`).
 - Syncs time via NTP (`CET/CEST` timezone).
 - Fetches Nord Pool price data at startup.
-- Refreshes hourly state from local clock.
+- Refreshes current interval state from local clock.
 - Fetches full price data again daily at 13:00 local time.
 - Retries every 30 seconds on fetch failure.
 - Applies custom price calculation: `1.25 * energy + 0.84225` (kr/kWh).

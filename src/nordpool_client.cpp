@@ -15,19 +15,22 @@
 
 namespace {
 constexpr uint32_t kHttpTimeoutMs = 10000;
-constexpr size_t kMovingAverageWindowHours = 72;
+constexpr uint16_t kMovingAverageWindowHours = 72;
+constexpr uint16_t kMaxMovingAverageWindowSamples = kMovingAverageWindowHours * 4;  // 15-minute resolution
 constexpr char kMovingAveragePath[] = "/nordpool_ma.bin";
 constexpr float kDefaultMovingAverageKrPerKwh = 1.0f;
 constexpr uint32_t kAvgStoreMagic = 0x4E504D41;  // "NPMA"
-constexpr uint16_t kAvgStoreVersion = 1;
+constexpr uint16_t kAvgStoreVersion = 2;
 
 struct MovingAverageStore {
   uint32_t magic = kAvgStoreMagic;
   uint16_t version = kAvgStoreVersion;
+  uint16_t resolutionMinutes = 60;
+  uint16_t windowSamples = kMovingAverageWindowHours;
   uint16_t count = 0;
   uint16_t head = 0;  // next write index
-  char lastHourKey[14] = {0};  // YYYY-MM-DDTHH
-  float values[kMovingAverageWindowHours] = {0.0f};
+  char lastSlotKey[20] = {0};  // YYYY-MM-DDTHH or YYYY-MM-DDTHH:MM
+  float values[kMaxMovingAverageWindowSamples] = {0.0f};
 };
 
 float applyCustomPriceFormula(float rawPriceKrPerKwh) {
@@ -62,8 +65,20 @@ bool parseUtcIso(const String &iso, struct tm &tmUtc) {
   return true;
 }
 
-bool isHourKey(const String &value) {
-  return value.length() == 13;
+uint16_t normalizeResolutionMinutes(uint16_t resolutionMinutes) {
+  if (resolutionMinutes == 15 || resolutionMinutes == 30 || resolutionMinutes == 60) {
+    return resolutionMinutes;
+  }
+  return 60;
+}
+
+uint16_t movingAverageWindowForResolution(uint16_t resolutionMinutes) {
+  const uint16_t normalizedResolution = normalizeResolutionMinutes(resolutionMinutes);
+  return (uint16_t)((kMovingAverageWindowHours * 60) / normalizedResolution);
+}
+
+bool isIntervalKey(const String &value) {
+  return value.length() == 13 || value.length() == 16;
 }
 
 bool ensureSpiffsMounted() {
@@ -99,8 +114,12 @@ bool loadStore(MovingAverageStore &store) {
   file.close();
   if (readBytes != sizeof(MovingAverageStore)) return false;
   if (store.magic != kAvgStoreMagic || store.version != kAvgStoreVersion) return false;
-  if (store.head >= kMovingAverageWindowHours) return false;
-  if (store.count > kMovingAverageWindowHours) return false;
+  store.resolutionMinutes = normalizeResolutionMinutes(store.resolutionMinutes);
+  const uint16_t expectedWindow = movingAverageWindowForResolution(store.resolutionMinutes);
+  if (store.windowSamples != expectedWindow) return false;
+  if (store.windowSamples == 0 || store.windowSamples > kMaxMovingAverageWindowSamples) return false;
+  if (store.head >= store.windowSamples) return false;
+  if (store.count > store.windowSamples) return false;
   return true;
 }
 
@@ -117,9 +136,13 @@ bool saveStore(const MovingAverageStore &store) {
 }
 
 void addMovingAverageSample(MovingAverageStore &store, float value) {
+  if (store.windowSamples == 0 || store.windowSamples > kMaxMovingAverageWindowSamples) {
+    store.windowSamples = kMovingAverageWindowHours;
+  }
+
   store.values[store.head] = value;
-  store.head = (store.head + 1) % kMovingAverageWindowHours;
-  if (store.count < kMovingAverageWindowHours) ++store.count;
+  store.head = (store.head + 1) % store.windowSamples;
+  if (store.count < store.windowSamples) ++store.count;
 }
 
 float movingAverageValue(const MovingAverageStore &store) {
@@ -151,16 +174,16 @@ void applyLevelsFromMovingAverage(PriceState &state, float movingAvgKrPerKwh) {
 
 bool updateHistoryFromPoints(PriceState &state, MovingAverageStore &store) {
   bool changed = false;
-  String lastPersisted = String(store.lastHourKey);
+  String lastPersisted = String(store.lastSlotKey);
   for (size_t i = 0; i < state.count; ++i) {
-    const String pointKey = hourKeyFromIso(state.points[i].startsAt);
-    if (!isHourKey(pointKey)) continue;
-    if (isHourKey(lastPersisted) && pointKey <= lastPersisted) continue;  // already processed
+    const String pointKey = intervalKeyFromIso(state.points[i].startsAt, state.resolutionMinutes);
+    if (!isIntervalKey(pointKey)) continue;
+    if (isIntervalKey(lastPersisted) && pointKey <= lastPersisted) continue;  // already processed
 
-    // Include all available fetched hours (today + tomorrow) in the rolling history.
+    // Include all available fetched points (today + tomorrow) in the rolling history.
     addMovingAverageSample(store, state.points[i].price);
-    strncpy(store.lastHourKey, pointKey.c_str(), sizeof(store.lastHourKey) - 1);
-    store.lastHourKey[sizeof(store.lastHourKey) - 1] = '\0';
+    strncpy(store.lastSlotKey, pointKey.c_str(), sizeof(store.lastSlotKey) - 1);
+    store.lastSlotKey[sizeof(store.lastSlotKey) - 1] = '\0';
     lastPersisted = pointKey;
     changed = true;
   }
@@ -186,7 +209,7 @@ time_t utcToEpochSeconds(const struct tm &tmUtc) {
   return (time_t)sec;
 }
 
-String utcIsoToLocalIsoHour(const String &utcIso) {
+String utcIsoToLocalIsoSlot(const String &utcIso) {
   struct tm tmUtc;
   if (!parseUtcIso(utcIso, tmUtc)) return utcIso;
 
@@ -197,7 +220,7 @@ String utcIsoToLocalIsoHour(const String &utcIso) {
   if (!localtime_r(&epochUtc, &localTm)) return utcIso;
 
   char out[32];
-  strftime(out, sizeof(out), "%Y-%m-%dT%H:00:00", &localTm);
+  strftime(out, sizeof(out), "%Y-%m-%dT%H:%M:00", &localTm);
   return String(out);
 }
 
@@ -220,7 +243,7 @@ bool addPoints(JsonArray arr, const String &area, PriceState &state) {
     const float adjustedPrice = applyCustomPriceFormula(energyPriceKrPerKwh);
 
     PricePoint &p = state.points[state.count++];
-    p.startsAt = utcIsoToLocalIsoHour(String((const char *)(item["deliveryStart"] | "")));
+    p.startsAt = utcIsoToLocalIsoSlot(String((const char *)(item["deliveryStart"] | "")));
     p.price = adjustedPrice;
     p.level = classifyLevel(adjustedPrice);
     added = true;
@@ -236,11 +259,13 @@ bool fetchDate(
     const char *date,
     const char *area,
     const char *currency,
+    uint16_t resolutionMinutes,
     PriceState &out
 ) {
+  const uint16_t normalizedResolution = normalizeResolutionMinutes(resolutionMinutes);
   const String url =
       String(apiBaseUrl) + "?date=" + String(date) + "&market=DayAhead&indexNames=" + String(area) +
-      "&currency=" + String(currency) + "&resolutionInMinutes=60";
+      "&currency=" + String(currency) + "&resolutionInMinutes=" + String(normalizedResolution);
 
   http.useHTTP10(true);
   http.setReuse(false);
@@ -293,12 +318,12 @@ bool fetchDate(
 }
 
 void assignCurrentFromClock(PriceState &out) {
-  const String key = currentHourKey();
+  const String key = currentIntervalKey(out.resolutionMinutes);
   if (key.isEmpty()) return;
 
   out.currentIndex = -1;
   for (size_t i = 0; i < out.count; ++i) {
-    if (hourKeyFromIso(out.points[i].startsAt) == key) {
+    if (intervalKeyFromIso(out.points[i].startsAt, out.resolutionMinutes) == key) {
       out.currentIndex = (int)i;
       break;
     }
@@ -319,9 +344,17 @@ void assignCurrentLevel(PriceState &out) {
 uint16_t applyMovingAverageToState(PriceState &state) {
   if (state.count == 0) return 0;
 
+  state.resolutionMinutes = normalizeResolutionMinutes(state.resolutionMinutes);
+  const uint16_t targetWindow = movingAverageWindowForResolution(state.resolutionMinutes);
+
   MovingAverageStore store;
   if (!loadStore(store)) {
     resetStore(store);
+  }
+  if (store.resolutionMinutes != state.resolutionMinutes || store.windowSamples != targetWindow) {
+    resetStore(store);
+    store.resolutionMinutes = state.resolutionMinutes;
+    store.windowSamples = targetWindow;
   }
 
   const bool historyChanged = updateHistoryFromPoints(state, store);
@@ -348,27 +381,42 @@ uint16_t applyMovingAverageToState(PriceState &state) {
 }
 }  // namespace
 
-PriceState fetchNordPoolPriceInfo(const char *apiBaseUrl, const char *area, const char *currency) {
-  PriceState out;
+void fetchNordPoolPriceInfo(
+    const char *apiBaseUrl,
+    const char *area,
+    const char *currency,
+    uint16_t resolutionMinutes,
+    PriceState &out) {
+  out.ok = false;
+  out.error = "";
   out.source = "NORDPOOL";
-  logf("Nord Pool fetch start. free_heap=%u", ESP.getFreeHeap());
+  out.hasRunningAverage = false;
+  out.runningAverage = 0.0f;
+  out.currency = "SEK";
+  out.resolutionMinutes = normalizeResolutionMinutes(resolutionMinutes);
+  out.currentStartsAt = "";
+  out.currentLevel = "UNKNOWN";
+  out.currentPrice = 0.0f;
+  out.currentIndex = -1;
+  out.count = 0;
+  logf("Nord Pool fetch start: resolution=%u free_heap=%u", (unsigned)out.resolutionMinutes, ESP.getFreeHeap());
 
   if (WiFi.status() != WL_CONNECTED) {
     out.error = "WiFi not connected";
-    return out;
+    return;
   }
 
   const time_t now = time(nullptr);
   if (now < 1700000000) {
     out.error = "Clock not synced";
-    return out;
+    return;
   }
 
   char today[16];
   char tomorrow[16];
   if (!formatDate(now, today, sizeof(today)) || !formatDate(now + 24 * 3600, tomorrow, sizeof(tomorrow))) {
     out.error = "Date format failed";
-    return out;
+    return;
   }
 
   WiFiClientSecure client;
@@ -378,37 +426,37 @@ PriceState fetchNordPoolPriceInfo(const char *apiBaseUrl, const char *area, cons
   http.setConnectTimeout(kHttpTimeoutMs);
   http.setTimeout(kHttpTimeoutMs);
 
-  if (!fetchDate(http, client, apiBaseUrl, today, area, currency, out)) {
-    return out;
+  if (!fetchDate(http, client, apiBaseUrl, today, area, currency, out.resolutionMinutes, out)) {
+    return;
   }
 
   // Tomorrow can be unavailable earlier in the day; keep today's prices if present.
-  if (!fetchDate(http, client, apiBaseUrl, tomorrow, area, currency, out)) {
+  if (!fetchDate(http, client, apiBaseUrl, tomorrow, area, currency, out.resolutionMinutes, out)) {
     logf("Nord Pool tomorrow fetch failed: %s", out.error.c_str());
     if (out.count == 0) {
-      return out;
+      return;
     }
     out.error = "";
   }
 
   if (out.count == 0) {
-    out.error = "No hourly prices";
-    return out;
+    out.error = "No prices";
+    return;
   }
 
   const uint16_t sampleCount = applyMovingAverageToState(out);
 
   out.ok = true;
   logf(
-      "Nord Pool OK: points=%u current=%.3f %s level=%s ma=%.3f samples=%u",
+      "Nord Pool OK: points=%u res=%u current=%.3f %s level=%s ma=%.3f samples=%u",
       (unsigned)out.count,
+      (unsigned)out.resolutionMinutes,
       out.currentPrice,
       out.currency.c_str(),
       out.currentLevel.c_str(),
       out.runningAverage,
       (unsigned)sampleCount
   );
-  return out;
 }
 
 void nordPoolPreupdateMovingAverageFromPriceInfo(PriceState &state) {

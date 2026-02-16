@@ -517,8 +517,8 @@ void displayDrawWifiConfigPortal(const char *apName, uint16_t timeoutSeconds)
   drawCenteredLine(ap, 80, 2, TFT_WHITE);
   drawCenteredLine("2) Open: 192.168.4.1", 108, 2, TFT_LIGHTGREY);
   drawCenteredLine("3) Select Wi-Fi and Save", 130, 2, TFT_LIGHTGREY);
-  drawCenteredLine("4) Select Nord Pool area", 152, 2, TFT_LIGHTGREY);
-  drawCenteredLine("   and currency", 170, 2, TFT_LIGHTGREY);
+  drawCenteredLine("4) Select Nord Pool area,", 152, 2, TFT_LIGHTGREY);
+  drawCenteredLine("   currency, and resolution", 170, 2, TFT_LIGHTGREY);
   drawCenteredLine(String(timeoutBuf), 194, 2, TFT_YELLOW);
 }
 

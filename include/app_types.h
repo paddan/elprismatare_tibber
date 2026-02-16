@@ -2,7 +2,7 @@
 
 #include <Arduino.h>
 
-constexpr size_t kMaxPoints = 60;
+constexpr size_t kMaxPoints = 240;
 
 struct PricePoint {
   String startsAt;
@@ -17,6 +17,7 @@ struct PriceState {
   bool hasRunningAverage = false;
   float runningAverage = 0.0f;
   String currency = "SEK";
+  uint16_t resolutionMinutes = 60;
   String currentStartsAt;
   String currentLevel = "UNKNOWN";
   float currentPrice = 0.0f;

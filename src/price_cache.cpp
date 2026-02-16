@@ -23,11 +23,11 @@ bool ensureSpiffsMounted() {
 }
 
 int findCurrentIndex(const PriceState &state) {
-  const String key = currentHourKey();
+  const String key = currentIntervalKey(state.resolutionMinutes);
   if (key.isEmpty()) return -1;
 
   for (size_t i = 0; i < state.count; ++i) {
-    if (hourKeyFromIso(state.points[i].startsAt) == key) {
+    if (intervalKeyFromIso(state.points[i].startsAt, state.resolutionMinutes) == key) {
       return (int)i;
     }
   }
@@ -67,6 +67,7 @@ bool priceCacheLoadInternal(const char *expectedSource, bool requireCurrentHour,
   }
 
   out.currency = String((const char *)(doc["currency"] | "SEK"));
+  out.resolutionMinutes = doc["resolutionMinutes"] | 60;
   out.hasRunningAverage = doc["hasRunningAverage"] | false;
   out.runningAverage = doc["runningAverage"] | 0.0f;
 
@@ -90,7 +91,7 @@ bool priceCacheLoadInternal(const char *expectedSource, bool requireCurrentHour,
   int idx = findCurrentIndex(out);
   if (idx < 0) {
     if (requireCurrentHour) {
-      // Cache exists but does not cover current hour.
+      // Cache exists but does not cover current interval.
       return false;
     }
     idx = 0;
@@ -110,6 +111,7 @@ bool priceCacheSave(const PriceState &state) {
   doc["version"] = kCacheVersion;
   doc["source"] = state.source;
   doc["currency"] = state.currency;
+  doc["resolutionMinutes"] = state.resolutionMinutes;
   doc["hasRunningAverage"] = state.hasRunningAverage;
   doc["runningAverage"] = state.runningAverage;
 

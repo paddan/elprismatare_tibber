@@ -32,6 +32,8 @@ constexpr time_t kValidEpochMin = 1700000000;
 #endif
 
 PriceState gState;
+PriceState gFetchBuffer;
+PriceState gCacheBuffer;
 AppSecrets gSecrets;
 uint32_t gLastFetchMs = 0;
 time_t gNextDailyFetch = 0;
@@ -193,8 +195,13 @@ void applyFetchedState(const PriceState &fetched)
 void fetchAndRender()
 {
   logf("Fetch+render start");
-  applyFetchedState(
-      fetchNordPoolPriceInfo(kNordPoolApiUrl, gSecrets.nordpoolArea.c_str(), gSecrets.nordpoolCurrency.c_str()));
+  fetchNordPoolPriceInfo(
+      kNordPoolApiUrl,
+      gSecrets.nordpoolArea.c_str(),
+      gSecrets.nordpoolCurrency.c_str(),
+      gSecrets.nordpoolResolutionMinutes,
+      gFetchBuffer);
+  applyFetchedState(gFetchBuffer);
   logf("Fetch+render done");
 }
 
@@ -257,14 +264,14 @@ void updateCurrentHourFromClock()
   if (!gState.ok || gState.count == 0)
     return;
 
-  const String key = currentHourKey();
+  const String key = currentIntervalKey(gSecrets.nordpoolResolutionMinutes);
   if (key.isEmpty())
     return;
 
   int idx = -1;
   for (size_t i = 0; i < gState.count; ++i)
   {
-    if (hourKeyFromIso(gState.points[i].startsAt) == key)
+    if (intervalKeyFromIso(gState.points[i].startsAt, gSecrets.nordpoolResolutionMinutes) == key)
     {
       idx = (int)i;
       break;
@@ -277,7 +284,7 @@ void updateCurrentHourFromClock()
   gState.currentStartsAt = gState.points[idx].startsAt;
   gState.currentLevel = gState.points[idx].level;
   gState.currentPrice = gState.points[idx].price;
-  logf("Hour change update: idx=%d price=%.3f", idx, gState.currentPrice);
+  logf("Price slot update: idx=%d price=%.3f", idx, gState.currentPrice);
   displayDrawPrices(gState);
 }
 
@@ -309,8 +316,13 @@ void handleClockDrivenUpdates(time_t now)
   if (gNextDailyFetch != 0 && now >= gNextDailyFetch)
   {
     logf("Daily 13:00 fetch trigger");
-    const PriceState fetched =
-        fetchNordPoolPriceInfo(kNordPoolApiUrl, gSecrets.nordpoolArea.c_str(), gSecrets.nordpoolCurrency.c_str());
+    fetchNordPoolPriceInfo(
+        kNordPoolApiUrl,
+        gSecrets.nordpoolArea.c_str(),
+        gSecrets.nordpoolCurrency.c_str(),
+        gSecrets.nordpoolResolutionMinutes,
+        gFetchBuffer);
+    const PriceState &fetched = gFetchBuffer;
     if (!fetched.ok)
     {
       logf("Daily fetch failed, retry in %ld sec", (long)kRetryDailyIfUnchangedSec);
@@ -366,14 +378,13 @@ void setup()
   loadAppSecrets(gSecrets);
 
   bool loadedFromCache = false;
-  PriceState cached;
   const bool wifiConnected = wifiConnectWithConfigPortal(gSecrets, kWifiPortalTimeoutSec);
 
   if (!wifiConnected)
   {
-    if (priceCacheLoadIfAvailable(activeSourceLabel(), cached))
+    if (priceCacheLoadIfAvailable(activeSourceLabel(), gCacheBuffer))
     {
-      gState = cached;
+      gState = gCacheBuffer;
       gState.source = "no wifi";
       displayDrawPrices(gState);
       logf("No WiFi at boot, loaded prices from cache: points=%u", (unsigned)gState.count);
@@ -393,17 +404,27 @@ void setup()
   const time_t nowAfterSync = time(nullptr);
   scheduleDailyFetch(nowAfterSync);
 
-  if (priceCacheLoadIfCurrent(activeSourceLabel(), cached))
+  if (priceCacheLoadIfCurrent(activeSourceLabel(), gCacheBuffer))
   {
-    gState = cached;
-    if (!priceCacheSave(gState))
+    if (gCacheBuffer.resolutionMinutes == gSecrets.nordpoolResolutionMinutes)
     {
-      logf("Price cache save failed");
+      gState = gCacheBuffer;
+      if (!priceCacheSave(gState))
+      {
+        logf("Price cache save failed");
+      }
+      displayDrawPrices(gState);
+      logf("Loaded current prices from cache: points=%u", (unsigned)gState.count);
+      loadedFromCache = true;
+      gPendingCatchUpRecheck = true;
     }
-    displayDrawPrices(gState);
-    logf("Loaded current prices from cache: points=%u", (unsigned)gState.count);
-    loadedFromCache = true;
-    gPendingCatchUpRecheck = true;
+    else
+    {
+      logf(
+          "Ignored cache due to resolution mismatch: cache=%u configured=%u",
+          (unsigned)gCacheBuffer.resolutionMinutes,
+          (unsigned)gSecrets.nordpoolResolutionMinutes);
+    }
   }
 
   if (!loadedFromCache)
