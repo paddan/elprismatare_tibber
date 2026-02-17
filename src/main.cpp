@@ -406,25 +406,37 @@ void setup()
 
   if (priceCacheLoadIfCurrent(activeSourceLabel(), gCacheBuffer))
   {
-    if (gCacheBuffer.resolutionMinutes == gSecrets.nordpoolResolutionMinutes)
-    {
-      gState = gCacheBuffer;
-      if (!priceCacheSave(gState))
-      {
-        logf("Price cache save failed");
-      }
-      displayDrawPrices(gState);
-      logf("Loaded current prices from cache: points=%u", (unsigned)gState.count);
-      loadedFromCache = true;
-      gPendingCatchUpRecheck = true;
-    }
-    else
+    if (gCacheBuffer.resolutionMinutes != gSecrets.nordpoolResolutionMinutes)
     {
       logf(
-          "Ignored cache due to resolution mismatch: cache=%u configured=%u",
+          "Using current cache with different resolution: cache=%u configured=%u",
           (unsigned)gCacheBuffer.resolutionMinutes,
           (unsigned)gSecrets.nordpoolResolutionMinutes);
     }
+    gState = gCacheBuffer;
+    if (!priceCacheSave(gState))
+    {
+      logf("Price cache save failed");
+    }
+    displayDrawPrices(gState);
+    logf("Loaded current prices from cache: points=%u", (unsigned)gState.count);
+    loadedFromCache = true;
+    gPendingCatchUpRecheck = true;
+  }
+  else if (priceCacheLoadIfAvailable(activeSourceLabel(), gCacheBuffer))
+  {
+    if (gCacheBuffer.resolutionMinutes != gSecrets.nordpoolResolutionMinutes)
+    {
+      logf(
+          "Using available cache with different resolution: cache=%u configured=%u",
+          (unsigned)gCacheBuffer.resolutionMinutes,
+          (unsigned)gSecrets.nordpoolResolutionMinutes);
+    }
+    gState = gCacheBuffer;
+    displayDrawPrices(gState);
+    logf("Loaded available prices from cache: points=%u", (unsigned)gState.count);
+    loadedFromCache = true;
+    gPendingCatchUpRecheck = true;
   }
 
   if (!loadedFromCache)
