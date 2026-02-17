@@ -38,6 +38,7 @@ Reset button:
 - Hold the configured reset button for 2 seconds to clear saved Wi-Fi and saved Nord Pool settings, then restart.
 - Configure the button pin with `CONFIG_RESET_PIN` in `platformio.ini` (`-1` disables this feature).
 - Set `CONFIG_RESET_ACTIVE_LEVEL` to `LOW` (button to GND) or `HIGH` (button to 3V3).
+- Clock resync interval can be tuned with `CONFIG_CLOCK_RESYNC_INTERVAL_SEC` (default `21600`) and retry delay with `CONFIG_CLOCK_RESYNC_RETRY_SEC` (default `600`).
 
 ## Build And Upload
 

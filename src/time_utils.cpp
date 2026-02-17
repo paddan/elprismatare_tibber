@@ -17,6 +17,26 @@ bool parseTwoDigits(const char *chars, int &out) {
   out = ((chars[0] - '0') * 10) + (chars[1] - '0');
   return true;
 }
+
+String dateKeyFromTime(time_t when, time_t validEpochMin) {
+  if (!isValidClock(when, validEpochMin)) return "";
+
+  struct tm localTm;
+  if (!localtime_r(&when, &localTm)) return "";
+  char key[11];
+  strftime(key, sizeof(key), "%Y-%m-%d", &localTm);
+  return String(key);
+}
+
+bool stateContainsDate(const PriceState &state, const String &dateKey) {
+  if (!state.ok || state.count == 0 || dateKey.length() != 10) return false;
+
+  for (size_t i = 0; i < state.count; ++i) {
+    if (state.points[i].startsAt.length() < 10) continue;
+    if (state.points[i].startsAt.substring(0, 10) == dateKey) return true;
+  }
+  return false;
+}
 }  // namespace
 
 uint16_t normalizeResolutionMinutes(uint16_t resolutionMinutes) {
@@ -24,6 +44,10 @@ uint16_t normalizeResolutionMinutes(uint16_t resolutionMinutes) {
     return resolutionMinutes;
   }
   return 60;
+}
+
+bool isValidClock(time_t now, time_t validEpochMin) {
+  return now > validEpochMin;
 }
 
 const char *timezoneSpecForNordpoolArea(const String &area) {
@@ -89,6 +113,44 @@ int findCurrentPricePointIndex(const PriceState &state, uint16_t resolutionMinut
   const String key = currentIntervalKey(resolutionMinutes);
   if (key.isEmpty()) return -1;
   return findPricePointIndexForInterval(state, key, resolutionMinutes);
+}
+
+bool shouldCatchUpMissedDailyUpdate(
+    time_t now,
+    const PriceState &state,
+    int dailyFetchHour,
+    int dailyFetchMinute,
+    time_t validEpochMin) {
+  if (!isValidClock(now, validEpochMin)) return false;
+
+  struct tm tmToday;
+  localtime_r(&now, &tmToday);
+  tmToday.tm_hour = dailyFetchHour;
+  tmToday.tm_min = dailyFetchMinute;
+  tmToday.tm_sec = 0;
+  const time_t todayFetchTime = mktime(&tmToday);
+  if (todayFetchTime == (time_t)-1 || now < todayFetchTime) return false;
+
+  struct tm tmTomorrow = tmToday;
+  tmTomorrow.tm_mday += 1;
+  tmTomorrow.tm_hour = 0;
+  tmTomorrow.tm_min = 0;
+  tmTomorrow.tm_sec = 0;
+  const time_t tomorrow = mktime(&tmTomorrow);
+  if (!isValidClock(tomorrow, validEpochMin)) return false;
+
+  const String tomorrowDate = dateKeyFromTime(tomorrow, validEpochMin);
+  if (tomorrowDate.isEmpty()) return false;
+
+  const bool hasTomorrow = stateContainsDate(state, tomorrowDate);
+  if (!hasTomorrow) {
+    logf(
+        "After %02d:%02d and cache is missing %s, catch-up fetch needed",
+        dailyFetchHour,
+        dailyFetchMinute,
+        tomorrowDate.c_str());
+  }
+  return !hasTomorrow;
 }
 
 void syncClock(const char *timezoneSpec) {
