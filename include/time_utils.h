@@ -6,8 +6,6 @@
 struct PriceState;
 
 uint16_t normalizeResolutionMinutes(uint16_t resolutionMinutes);
-String hourKeyFromIso(const String &iso);
-String currentHourKey();
 String intervalKeyFromIso(const String &iso, uint16_t resolutionMinutes);
 String currentIntervalKey(uint16_t resolutionMinutes);
 int findPricePointIndexForInterval(const PriceState &state, const String &intervalKey, uint16_t resolutionMinutes);

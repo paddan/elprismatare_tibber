@@ -43,7 +43,7 @@ namespace
   constexpr int kDayLabelY = kChartY - 10; // Date labels above graph (14/02, 15/02).
   constexpr int kAxisLabelX = kChartX - 8; // Y-axis number labels to the left of graph.
 
-  // Current-hour arrow marker.
+  // Current-interval arrow marker.
   constexpr int kCurrentArrowHalfWidth = 4;          // Half arrow base width (full width = *2).
   constexpr int kCurrentArrowHeight = 13;            // Arrow height.
   constexpr uint16_t kCurrentArrowColor = TFT_WHITE; // Arrow color.
@@ -609,6 +609,11 @@ void displayDrawPrices(const PriceState &state)
   drawYAxis(range, xAxisY, drawableH);
   drawBars(state, range, bands, xAxisY, drawableH);
   drawRunningAverage(state, range, xAxisY, drawableH);
+}
+
+void displayRefreshClock()
+{
+  drawClockLabel();
 }
 
 void displayDrawWifiConfigPortal(const char *apName, uint16_t timeoutSeconds)

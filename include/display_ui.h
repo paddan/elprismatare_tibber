@@ -4,5 +4,6 @@
 
 void displayInit();
 void displayDrawPrices(const PriceState &state);
+void displayRefreshClock();
 void displayDrawWifiConfigPortal(const char *apName, uint16_t timeoutSeconds);
 void displayDrawWifiConfigTimeout(uint16_t timeoutSeconds);

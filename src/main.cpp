@@ -288,7 +288,7 @@ bool applyLoadedCacheState(const PriceState &cacheState, const char *cacheLabel,
   return true;
 }
 
-void updateCurrentHourFromClock()
+void updateCurrentIntervalFromClock()
 {
   if (!gState.ok || gState.count == 0)
     return;
@@ -324,7 +324,8 @@ void handleClockDrivenUpdates(time_t now)
   if (minuteTick != gLastMinuteTick)
   {
     gLastMinuteTick = minuteTick;
-    updateCurrentHourFromClock();
+    displayRefreshClock();
+    updateCurrentIntervalFromClock();
   }
 
   if (gNextDailyFetch == 0)

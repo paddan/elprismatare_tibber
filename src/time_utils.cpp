@@ -91,14 +91,6 @@ int findCurrentPricePointIndex(const PriceState &state, uint16_t resolutionMinut
   return findPricePointIndexForInterval(state, key, resolutionMinutes);
 }
 
-String hourKeyFromIso(const String &iso) {
-  return intervalKeyFromIso(iso, 60);
-}
-
-String currentHourKey() {
-  return currentIntervalKey(60);
-}
-
 void syncClock(const char *timezoneSpec) {
   logf("Clock sync start: tz=%s", timezoneSpec ? timezoneSpec : "(null)");
   configTzTime(timezoneSpec, "pool.ntp.org", "time.nist.gov");

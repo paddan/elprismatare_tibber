@@ -31,7 +31,7 @@ void applyCurrentFromIndex(PriceState &state, int idx) {
   state.currentPrice = state.points[idx].price;
 }
 
-bool priceCacheLoadInternal(const char *expectedSource, bool requireCurrentHour, PriceState &out) {
+bool priceCacheLoadInternal(const char *expectedSource, bool requireCurrentInterval, PriceState &out) {
   out = PriceState();
   if (!ensureSpiffsMounted()) return false;
 
@@ -78,7 +78,7 @@ bool priceCacheLoadInternal(const char *expectedSource, bool requireCurrentHour,
 
   int idx = findCurrentPricePointIndex(out, out.resolutionMinutes);
   if (idx < 0) {
-    if (requireCurrentHour) {
+    if (requireCurrentInterval) {
       // Cache exists but does not cover current interval.
       return false;
     }

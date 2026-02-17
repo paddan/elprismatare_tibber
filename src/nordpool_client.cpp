@@ -35,7 +35,7 @@ struct MovingAverageStore {
 };
 
 float applyCustomPriceFormula(float rawPriceKrPerKwh) {
-  // Apply formula in ore: 1.25 * hourly_price + 84.225, then convert back to kr.
+  // Apply formula in ore: 1.25 * energy_price + 84.225, then convert back to kr.
   const float rawOre = rawPriceKrPerKwh * 100.0f;
   const float adjustedOre = (1.25f * rawOre) + 84.225f;
   return adjustedOre / 100.0f;
