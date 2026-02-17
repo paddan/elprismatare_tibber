@@ -30,6 +30,8 @@ On boot, the device uses a WiFiManager portal to configure:
 - `NORDPOOL_AREA` (dropdown): `SE1`, `SE2`, `SE3`, `SE4`, `NO1`, `NO2`, `NO3`, `NO4`, `NO5`, `DK1`, `DK2`, `FI`, `EE`, `LV`, `LT`, `SYS`
 - `NORDPOOL_CURRENCY` (dropdown): `SEK`, `EUR`, `NOK`, `DKK`
 - `NORDPOOL_RESOLUTION_MINUTES` (dropdown): `15`, `30`, `60`
+- `VAT_PERCENT` (number): VAT rate in percent (default `25`)
+- `TOTAL_FIXED_COST_PER_KWH` (number): total fixed cost in currency per kWh (default `0`)
 
 Runtime configuration is persisted in NVS and reused on future boots.
 
@@ -58,7 +60,7 @@ platformio device monitor -b 115200
 - Refreshes current interval state from local clock.
 - Fetches full price data again daily at 13:00 local time.
 - Retries every 30 seconds on fetch failure.
-- Applies custom price calculation: `1.25 * energy + 0.84225` (kr/kWh).
+- Applies configurable price calculation: `energy * (1 + VAT_PERCENT / 100) + TOTAL_FIXED_COST_PER_KWH` (currency/kWh).
 - Nord Pool level mapping uses ratio-based bands against a 72-hour moving average persisted in SPIFFS (`/nordpool_ma.bin`).
 
 ## Project Structure

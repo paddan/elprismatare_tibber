@@ -7,6 +7,8 @@ struct AppSecrets {
   String nordpoolArea;
   String nordpoolCurrency;
   uint16_t nordpoolResolutionMinutes = 60;
+  float vatPercent = 25.0f;
+  float fixedCostPerKwh = 0.0f;
 };
 
 void loadAppSecrets(AppSecrets &out);

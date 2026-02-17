@@ -15,12 +15,25 @@
 namespace {
 constexpr uint32_t kHttpTimeoutMs = 10000;
 constexpr float kDefaultMovingAverageKrPerKwh = 1.0f;
+constexpr float kDefaultVatPercent = 25.0f;
+constexpr float kDefaultFixedCostPerKwh = 0.0f;
 
-float applyCustomPriceFormula(float rawPriceKrPerKwh) {
-  // Apply formula in ore: 1.25 * energy_price + 84.225, then convert back to kr.
-  const float rawOre = rawPriceKrPerKwh * 100.0f;
-  const float adjustedOre = (1.25f * rawOre) + 84.225f;
-  return adjustedOre / 100.0f;
+float applyCustomPriceFormula(float rawPriceKrPerKwh, float vatPercent, float fixedCostPerKwh) {
+  // Apply configured formula in kr/kWh: (energy * (1 + VAT/100)) + fixed_cost.
+  const float vatMultiplier = 1.0f + (vatPercent / 100.0f);
+  return (rawPriceKrPerKwh * vatMultiplier) + fixedCostPerKwh;
+}
+
+float normalizeVatPercent(float value) {
+  if (!isfinite(value)) return kDefaultVatPercent;
+  if (value < 0.0f || value > 100.0f) return kDefaultVatPercent;
+  return value;
+}
+
+float normalizeFixedCostPerKwh(float value) {
+  if (!isfinite(value)) return kDefaultFixedCostPerKwh;
+  if (value < -100.0f || value > 100.0f) return kDefaultFixedCostPerKwh;
+  return value;
 }
 
 uint16_t movingAverageWindowForResolution(uint16_t resolutionMinutes) {
@@ -67,7 +80,7 @@ bool updateHistoryFromPoints(PriceState &state, MovingAverageStore &store) {
   return changed;
 }
 
-bool addPoints(JsonArray arr, const char *area, PriceState &state) {
+bool addPoints(JsonArray arr, const char *area, float vatPercent, float fixedCostPerKwh, PriceState &state) {
   if (arr.isNull()) return false;
 
   bool added = false;
@@ -83,7 +96,7 @@ bool addPoints(JsonArray arr, const char *area, PriceState &state) {
     // Nord Pool index prices are in currency/MWh. Convert to kr/kWh.
     const float nordPoolPricePerMwh = selected | 0.0f;
     const float energyPriceKrPerKwh = nordPoolPricePerMwh / 1000.0f;
-    const float adjustedPrice = applyCustomPriceFormula(energyPriceKrPerKwh);
+    const float adjustedPrice = applyCustomPriceFormula(energyPriceKrPerKwh, vatPercent, fixedCostPerKwh);
 
     PricePoint &p = state.points[state.count++];
     p.startsAt = utcIsoToLocalIsoSlot(String((const char *)(item["deliveryStart"] | "")));
@@ -103,6 +116,8 @@ bool fetchDate(
     const char *area,
     const char *currency,
     uint16_t resolutionMinutes,
+    float vatPercent,
+    float fixedCostPerKwh,
     PriceState &out
 ) {
   const uint16_t normalizedResolution = normalizeResolutionMinutes(resolutionMinutes);
@@ -163,7 +178,7 @@ bool fetchDate(
     out.currency = String((const char *)(doc["currency"] | currency));
   }
 
-  addPoints(doc["multiIndexEntries"], area, out);
+  addPoints(doc["multiIndexEntries"], area, vatPercent, fixedCostPerKwh, out);
   return true;
 }
 
@@ -227,6 +242,8 @@ void fetchNordPoolPriceInfo(
     const char *area,
     const char *currency,
     uint16_t resolutionMinutes,
+    float vatPercent,
+    float fixedCostPerKwh,
     PriceState &out) {
   out.ok = false;
   out.error = "";
@@ -241,6 +258,10 @@ void fetchNordPoolPriceInfo(
   out.currentIndex = -1;
   out.count = 0;
   logf("Nord Pool fetch start: resolution=%u free_heap=%u", (unsigned)out.resolutionMinutes, ESP.getFreeHeap());
+
+  const float normalizedVatPercent = normalizeVatPercent(vatPercent);
+  const float normalizedFixedCostPerKwh = normalizeFixedCostPerKwh(fixedCostPerKwh);
+  logf("Nord Pool formula: vat=%.2f%% fixed_kwh=%.4f", normalizedVatPercent, normalizedFixedCostPerKwh);
 
   if (WiFi.status() != WL_CONNECTED) {
     out.error = "WiFi not connected";
@@ -267,12 +288,32 @@ void fetchNordPoolPriceInfo(
   http.setConnectTimeout(kHttpTimeoutMs);
   http.setTimeout(kHttpTimeoutMs);
 
-  if (!fetchDate(http, client, apiBaseUrl, today, area, currency, out.resolutionMinutes, out)) {
+  if (!fetchDate(
+          http,
+          client,
+          apiBaseUrl,
+          today,
+          area,
+          currency,
+          out.resolutionMinutes,
+          normalizedVatPercent,
+          normalizedFixedCostPerKwh,
+          out)) {
     return;
   }
 
   // Tomorrow can be unavailable earlier in the day; keep today's prices if present.
-  if (!fetchDate(http, client, apiBaseUrl, tomorrow, area, currency, out.resolutionMinutes, out)) {
+  if (!fetchDate(
+          http,
+          client,
+          apiBaseUrl,
+          tomorrow,
+          area,
+          currency,
+          out.resolutionMinutes,
+          normalizedVatPercent,
+          normalizedFixedCostPerKwh,
+          out)) {
     logf("Nord Pool tomorrow fetch failed: %s", out.error.c_str());
     if (out.count == 0) {
       return;

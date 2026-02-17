@@ -13,7 +13,7 @@
 #include "wifi_utils.h"
 
 constexpr uint32_t kWifiConnectTimeoutMs = 20000;
-constexpr uint16_t kWifiPortalTimeoutSec = 60;
+constexpr uint16_t kWifiPortalTimeoutSec = 120;
 constexpr uint32_t kRetryOnErrorMs = 30000;
 constexpr time_t kRetryDailyIfUnchangedSec = 10 * 60;
 constexpr uint32_t kResetHoldMs = 2000;
@@ -160,6 +160,8 @@ void fetchAndRender()
       gSecrets.nordpoolArea.c_str(),
       gSecrets.nordpoolCurrency.c_str(),
       gSecrets.nordpoolResolutionMinutes,
+      gSecrets.vatPercent,
+      gSecrets.fixedCostPerKwh,
       gFetchBuffer);
   applyFetchedState(gFetchBuffer);
   logf("Fetch+render done");
@@ -267,6 +269,8 @@ void handleClockDrivenUpdates(time_t now)
         gSecrets.nordpoolArea.c_str(),
         gSecrets.nordpoolCurrency.c_str(),
         gSecrets.nordpoolResolutionMinutes,
+        gSecrets.vatPercent,
+        gSecrets.fixedCostPerKwh,
         gFetchBuffer);
     const PriceState &fetched = gFetchBuffer;
     if (!fetched.ok)

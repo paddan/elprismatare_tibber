@@ -7,5 +7,7 @@ void fetchNordPoolPriceInfo(
     const char *area,
     const char *currency,
     uint16_t resolutionMinutes,
+    float vatPercent,
+    float fixedCostPerKwh,
     PriceState &out);
 void nordPoolPreupdateMovingAverageFromPriceInfo(PriceState &state);
