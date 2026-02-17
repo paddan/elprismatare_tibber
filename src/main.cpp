@@ -20,7 +20,6 @@ constexpr uint32_t kResetPollIntervalMs = 50;
 constexpr int kDailyFetchHour = 13;
 constexpr int kDailyFetchMinute = 0;
 constexpr char kNordPoolApiUrl[] = "https://dataportal-api.nordpoolgroup.com/api/DayAheadPriceIndices";
-constexpr char kTimezoneSpec[] = "CET-1CEST,M3.5.0/2,M10.5.0/3";
 constexpr time_t kValidEpochMin = 1700000000;
 
 #ifndef CONFIG_RESET_PIN
@@ -103,6 +102,13 @@ void scheduleDailyFetch(time_t now)
 {
   gNextDailyFetch = scheduleNextDailyFetch(now, kDailyFetchHour, kDailyFetchMinute);
   logNextFetch(gNextDailyFetch);
+}
+
+void syncClockForSelectedArea()
+{
+  const char *timezoneSpec = timezoneSpecForNordpoolArea(gSecrets.nordpoolArea);
+  logf("Clock timezone selected: area=%s", gSecrets.nordpoolArea.c_str());
+  syncClock(timezoneSpec);
 }
 
 String dateKeyFromTime(time_t when)
@@ -400,7 +406,7 @@ void setup()
     return;
   }
 
-  syncClock(kTimezoneSpec);
+  syncClockForSelectedArea();
   const time_t nowAfterSync = time(nullptr);
   scheduleDailyFetch(nowAfterSync);
 
@@ -485,7 +491,7 @@ void loop()
     logf("WiFi restored, running online init");
     gNeedsOnlineInit = false;
     loadAppSecrets(gSecrets);
-    syncClock(kTimezoneSpec);
+    syncClockForSelectedArea();
     scheduleDailyFetch(time(nullptr));
     fetchAndRender();
   }

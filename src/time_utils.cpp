@@ -3,6 +3,9 @@
 #include "logging_utils.h"
 
 namespace {
+constexpr char kTimezoneCetCest[] = "CET-1CEST,M3.5.0/2,M10.5.0/3";
+constexpr char kTimezoneEetEest[] = "EET-2EEST,M3.5.0/3,M10.5.0/4";
+
 uint16_t normalizeResolutionMinutes(uint16_t resolutionMinutes) {
   if (resolutionMinutes == 15 || resolutionMinutes == 30 || resolutionMinutes == 60) {
     return resolutionMinutes;
@@ -10,6 +13,13 @@ uint16_t normalizeResolutionMinutes(uint16_t resolutionMinutes) {
   return 60;
 }
 }  // namespace
+
+const char *timezoneSpecForNordpoolArea(const String &area) {
+  if (area == "FI" || area == "EE" || area == "LV" || area == "LT") {
+    return kTimezoneEetEest;
+  }
+  return kTimezoneCetCest;
+}
 
 String intervalKeyFromIso(const String &iso, uint16_t resolutionMinutes) {
   if (iso.length() < 13) return "";
@@ -56,6 +66,7 @@ String currentHourKey() {
 }
 
 void syncClock(const char *timezoneSpec) {
+  logf("Clock sync start: tz=%s", timezoneSpec ? timezoneSpec : "(null)");
   configTzTime(timezoneSpec, "pool.ntp.org", "time.nist.gov");
   for (int i = 0; i < 20; ++i) {
     if (time(nullptr) > 1700000000) break;

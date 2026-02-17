@@ -52,7 +52,7 @@ platformio device monitor -b 115200
 - Connects to Wi-Fi at boot using saved credentials.
 - If Wi-Fi is unavailable, starts a WiFiManager AP/config portal (`ElMeter-<chipid>`) to configure Wi-Fi and Nord Pool settings.
 - While the portal is active, the TFT shows setup instructions (AP name + `192.168.4.1`).
-- Syncs time via NTP (`CET/CEST` timezone).
+- Syncs time via NTP using timezone mapped from selected Nord Pool area (`SE/NO/DK/SYS -> CET/CEST`, `FI/EE/LV/LT -> EET/EEST`).
 - Fetches Nord Pool price data at startup.
 - Refreshes current interval state from local clock.
 - Fetches full price data again daily at 13:00 local time.
