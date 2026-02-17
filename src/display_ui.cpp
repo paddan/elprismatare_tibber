@@ -40,7 +40,7 @@ namespace
   constexpr int kChartH = 124; // Graph height.
 
   // Labels around the chart.
-  constexpr int kDayLabelY = kChartY - 10; // Date labels above graph (14/02, 15/02).
+  constexpr int kDayLabelY = kChartY - 13; // Date labels above graph (14/02, 15/02).
   constexpr int kAxisLabelX = kChartX - 8; // Y-axis number labels to the left of graph.
 
   // Current-interval arrow marker.
@@ -49,8 +49,8 @@ namespace
   constexpr uint16_t kCurrentArrowColor = TFT_WHITE; // Arrow color.
 
   // Axis font sizes (TFT_eSPI bitmap fonts).
-  constexpr int kYAxisFontSize = 1;    // Y-axis labels/ticks text scale.
-  constexpr int kTopXAxisFontSize = 1; // Day labels text scale.
+  constexpr int kYAxisFontSize = 2;    // Y-axis labels/ticks text scale.
+  constexpr int kTopXAxisFontSize = 2; // Day labels text scale.
   constexpr int kSourceLabelX = 316;
   constexpr int kSourceLabelY = 2;
   constexpr uint16_t kAverageLineColor = TFT_CYAN;
@@ -96,15 +96,15 @@ namespace
   {
     // 5-step gradient: light green -> dark red.
     if (level == "VERY_CHEAP" || level == "LOW")
-      return tft.color565(170, 255, 170);  // light green
+      return tft.color565(170, 255, 170); // light green
     if (level == "CHEAP")
-      return tft.color565(96, 210, 110);   // medium green
+      return tft.color565(96, 210, 110); // medium green
     if (level == "NORMAL")
-      return tft.color565(245, 190, 70);   // warm yellow/orange
+      return tft.color565(245, 190, 70); // warm yellow/orange
     if (level == "EXPENSIVE" || level == "HIGH")
-      return tft.color565(185, 55, 35);    // red
+      return tft.color565(185, 55, 35); // red
     if (level == "VERY_EXPENSIVE")
-      return tft.color565(100, 0, 0);      // dark red
+      return tft.color565(100, 0, 0); // dark red
     return TFT_WHITE;
   }
 
@@ -214,11 +214,11 @@ namespace
   };
 
   static const Rgb kLevelColors[] = {
-      Rgb(170, 255, 170),  // VERY_CHEAP / LOW
-      Rgb(96, 210, 110),   // CHEAP
-      Rgb(245, 190, 70),   // NORMAL
-      Rgb(185, 55, 35),    // EXPENSIVE / HIGH
-      Rgb(100, 0, 0),      // VERY_EXPENSIVE
+      Rgb(170, 255, 170), // VERY_CHEAP / LOW
+      Rgb(96, 210, 110),  // CHEAP
+      Rgb(245, 190, 70),  // NORMAL
+      Rgb(185, 55, 35),   // EXPENSIVE / HIGH
+      Rgb(100, 0, 0),     // VERY_EXPENSIVE
   };
 
   int levelRank(const String &level)
@@ -459,12 +459,6 @@ namespace
       tft.drawFastHLine(x, yAvg, 3, kAverageLineColor);
     }
 
-    char label[16];
-    snprintf(label, sizeof(label), "%.1f", state.runningAverage);
-    tft.setTextColor(kAverageLineColor, TFT_BLACK);
-    tft.setTextDatum(MR_DATUM);
-    tft.drawString(label, kAxisLabelX, yAvg);
-    tft.setTextDatum(TL_DATUM);
   }
 
   void drawCurrentArrow(int barX, int barW, int barY)
