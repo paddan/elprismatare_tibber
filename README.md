@@ -1,4 +1,4 @@
-# el-meter-display
+# nordpool-price-display
 
 ESP32 + 2.4" TFT electricity price display for Nord Pool.
 

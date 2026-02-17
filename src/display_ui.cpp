@@ -479,7 +479,7 @@ namespace
       const int x0 = kChartX + (((int)i * kChartW) / pointCount);
       const int x1 = kChartX + ((((int)i + 1) * kChartW) / pointCount);
       const int x = x0;
-      const int w = max(1, x1 - x0 - 1);
+      const int w = max(1, x1 - x0);
       const int y = priceToY(p.price, range, xAxisY, drawableH);
       const int h = xAxisY - y + 1;
 
