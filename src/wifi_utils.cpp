@@ -21,7 +21,7 @@ namespace
   constexpr char kVatPercentKey[] = "np_vat";
   constexpr char kFixedCostPerKwhKey[] = "np_fixkwh";
   constexpr char kLegacyPriceMultiplierKey[] = "np_mult";
-  constexpr char kLegacyFixedAddOreKey[] = "np_fixore";
+  constexpr char kLegacyFixedAddMinorUnitKey[] = "np_fixore";
   constexpr char kDefaultNordpoolArea[] = "SE3";
   constexpr char kDefaultNordpoolCurrency[] = "SEK";
   constexpr uint16_t kDefaultNordpoolResolutionMinutes = 60;
@@ -163,7 +163,7 @@ namespace
   {
     if (!isfinite(value))
       return kDefaultFixedCostPerKwh;
-    if (value < -100.0f || value > 100.0f)
+    if (value < -10000.0f || value > 10000.0f)
       return kDefaultFixedCostPerKwh;
     return value;
   }
@@ -213,7 +213,7 @@ namespace
     prefs.putFloat(kFixedCostPerKwhKey, secrets.fixedCostPerKwh);
     prefs.end();
     logf(
-        "Secrets saved: area=%s currency=%s resolution=%u vat=%.2f%% fixed_kwh=%.4f",
+        "Secrets saved: area=%s currency=%s resolution=%u vat=%.2f%% fixed_minor_kwh=%.2f",
         secrets.nordpoolArea.c_str(),
         secrets.nordpoolCurrency.c_str(),
         (unsigned)secrets.nordpoolResolutionMinutes,
@@ -251,10 +251,10 @@ void loadAppSecrets(AppSecrets &out)
     {
       out.fixedCostPerKwh = prefs.getFloat(kFixedCostPerKwhKey, out.fixedCostPerKwh);
     }
-    else if (prefs.isKey(kLegacyFixedAddOreKey))
+    else if (prefs.isKey(kLegacyFixedAddMinorUnitKey))
     {
-      const float legacyFixedOre = prefs.getFloat(kLegacyFixedAddOreKey, 0.0f);
-      out.fixedCostPerKwh = legacyFixedOre / 100.0f;
+      const float legacyFixedMinorUnit = prefs.getFloat(kLegacyFixedAddMinorUnitKey, 0.0f);
+      out.fixedCostPerKwh = legacyFixedMinorUnit;
     }
     prefs.end();
   }
@@ -345,7 +345,7 @@ bool wifiConnectWithConfigPortal(AppSecrets &secrets, uint16_t portalTimeoutSeco
     normalizeSecrets(secrets);
   }
 
-  logf("WiFi connected: ssid='%s' ip=%s area=%s currency=%s resolution=%u vat=%.2f%% fixed_kwh=%.4f",
+  logf("WiFi connected: ssid='%s' ip=%s area=%s currency=%s resolution=%u vat=%.2f%% fixed_minor_kwh=%.2f",
        WiFi.SSID().c_str(),
        WiFi.localIP().toString().c_str(),
        secrets.nordpoolArea.c_str(),

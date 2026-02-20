@@ -9,7 +9,7 @@
 
 namespace {
 constexpr char kCachePath[] = "/price_cache.json";
-constexpr int kCacheVersion = 1;
+constexpr int kCacheVersion = 2;
 
 bool ensureSpiffsMounted() {
   static bool attempted = false;
@@ -47,7 +47,10 @@ bool priceCacheLoadInternal(const char *expectedSource, bool requireCurrentInter
   }
 
   const int version = doc["version"] | 0;
-  if (version != kCacheVersion) return false;
+  if (version != kCacheVersion) {
+    logf("Price cache version mismatch: found=%d expected=%d", version, kCacheVersion);
+    return false;
+  }
 
   out.source = String((const char *)(doc["source"] | ""));
   if (expectedSource != nullptr && strlen(expectedSource) > 0 && out.source != String(expectedSource)) {
@@ -72,6 +75,10 @@ bool priceCacheLoadInternal(const char *expectedSource, bool requireCurrentInter
     p.startsAt = startsAt;
     p.level = String((const char *)(item["level"] | "UNKNOWN"));
     p.price = item["price"] | 0.0f;
+    if (!item["rawPrice"].isNull()) {
+      p.rawPricePerKwh = item["rawPrice"] | 0.0f;
+      p.hasRawPrice = true;
+    }
   }
 
   if (out.count == 0) return false;
@@ -109,6 +116,9 @@ bool priceCacheSave(const PriceState &state) {
     item["startsAt"] = state.points[i].startsAt;
     item["level"] = state.points[i].level;
     item["price"] = state.points[i].price;
+    if (state.points[i].hasRawPrice) {
+      item["rawPrice"] = state.points[i].rawPricePerKwh;
+    }
   }
 
   File file = SPIFFS.open(kCachePath, FILE_WRITE);
@@ -133,4 +143,15 @@ bool priceCacheLoadIfCurrent(const char *expectedSource, PriceState &out) {
 
 bool priceCacheLoadIfAvailable(const char *expectedSource, PriceState &out) {
   return priceCacheLoadInternal(expectedSource, false, out);
+}
+
+bool priceCacheClear() {
+  if (!ensureSpiffsMounted()) return false;
+  if (!SPIFFS.exists(kCachePath)) return true;
+  if (!SPIFFS.remove(kCachePath)) {
+    logf("Price cache clear failed");
+    return false;
+  }
+  logf("Price cache cleared");
+  return true;
 }

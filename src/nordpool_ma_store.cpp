@@ -60,6 +60,17 @@ bool saveMovingAverageStore(const MovingAverageStore &store) {
   return written == sizeof(MovingAverageStore);
 }
 
+bool clearMovingAverageStore() {
+  if (!ensureSpiffsMounted()) return false;
+  if (!SPIFFS.exists(kMovingAveragePath)) return true;
+  if (!SPIFFS.remove(kMovingAveragePath)) {
+    logf("Nord Pool moving average clear failed");
+    return false;
+  }
+  logf("Nord Pool moving average cleared");
+  return true;
+}
+
 void addMovingAverageSample(MovingAverageStore &store, float value) {
   if (store.windowSamples == 0 || store.windowSamples > kMaxMovingAverageWindowSamples) {
     store.windowSamples = kMovingAverageWindowHours;
@@ -79,4 +90,3 @@ float movingAverageValue(const MovingAverageStore &store) {
   }
   return sum / (float)store.count;
 }
-

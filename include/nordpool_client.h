@@ -10,4 +10,5 @@ void fetchNordPoolPriceInfo(
     float vatPercent,
     float fixedCostPerKwh,
     PriceState &out);
-void nordPoolPreupdateMovingAverageFromPriceInfo(PriceState &state);
+void nordPoolPreupdateMovingAverageFromPriceInfo(PriceState &state, float vatPercent, float fixedCostPerKwh);
+bool nordPoolRecalculatePricesFromRaw(PriceState &state, float vatPercent, float fixedCostPerKwh);

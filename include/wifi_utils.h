@@ -8,6 +8,7 @@ struct AppSecrets {
   String nordpoolCurrency;
   uint16_t nordpoolResolutionMinutes = 60;
   float vatPercent = 25.0f;
+  // Stored as minor currency units per kWh.
   float fixedCostPerKwh = 0.0f;
 };
 

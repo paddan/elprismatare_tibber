@@ -5,3 +5,4 @@
 bool priceCacheSave(const PriceState &state);
 bool priceCacheLoadIfCurrent(const char *expectedSource, PriceState &out);
 bool priceCacheLoadIfAvailable(const char *expectedSource, PriceState &out);
+bool priceCacheClear();

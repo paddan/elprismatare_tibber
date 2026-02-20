@@ -14,14 +14,18 @@
 
 namespace {
 constexpr uint32_t kHttpTimeoutMs = 10000;
-constexpr float kDefaultMovingAverageKrPerKwh = 1.0f;
+constexpr float kDefaultMovingAveragePerKwh = 1.0f;
 constexpr float kDefaultVatPercent = 25.0f;
 constexpr float kDefaultFixedCostPerKwh = 0.0f;
+constexpr float kCentsMultiplier = 100.0f;
 
-float applyCustomPriceFormula(float rawPriceKrPerKwh, float vatPercent, float fixedCostPerKwh) {
-  // Apply configured formula in kr/kWh: (energy * (1 + VAT/100)) + fixed_cost.
+float applyCustomPriceFormula(float rawPricePerKwh, float vatPercent, float fixedCostMinorPerKwh) {
+  // Apply configured formula in minor units per kWh:
+  // ((energy_major * 100) * (1 + VAT/100) + fixed_cost_minor) / 100.
   const float vatMultiplier = 1.0f + (vatPercent / 100.0f);
-  return (rawPriceKrPerKwh * vatMultiplier) + fixedCostPerKwh;
+  const float energyPriceMinorPerKwh = rawPricePerKwh * kCentsMultiplier;
+  const float adjustedPriceMinorPerKwh = (energyPriceMinorPerKwh * vatMultiplier) + fixedCostMinorPerKwh;
+  return adjustedPriceMinorPerKwh / kCentsMultiplier;
 }
 
 float normalizeVatPercent(float value) {
@@ -32,7 +36,7 @@ float normalizeVatPercent(float value) {
 
 float normalizeFixedCostPerKwh(float value) {
   if (!isfinite(value)) return kDefaultFixedCostPerKwh;
-  if (value < -100.0f || value > 100.0f) return kDefaultFixedCostPerKwh;
+  if (value < -10000.0f || value > 10000.0f) return kDefaultFixedCostPerKwh;
   return value;
 }
 
@@ -45,10 +49,10 @@ bool isIntervalKey(const String &value) {
   return value.length() == 13 || value.length() == 16;
 }
 
-String classifyLevelFromAverage(float priceKrPerKwh, float movingAvgKrPerKwh) {
-  if (movingAvgKrPerKwh <= 0.0001f) return "UNKNOWN";
+String classifyLevelFromAverage(float pricePerKwh, float movingAvgPerKwh) {
+  if (movingAvgPerKwh <= 0.0001f) return "UNKNOWN";
 
-  const float ratio = priceKrPerKwh / movingAvgKrPerKwh;
+  const float ratio = pricePerKwh / movingAvgPerKwh;
   if (ratio <= 0.60f) return "VERY_CHEAP";
   if (ratio <= 0.90f) return "CHEAP";
   if (ratio < 1.15f) return "NORMAL";
@@ -56,9 +60,9 @@ String classifyLevelFromAverage(float priceKrPerKwh, float movingAvgKrPerKwh) {
   return "VERY_EXPENSIVE";
 }
 
-void applyLevelsFromMovingAverage(PriceState &state, float movingAvgKrPerKwh) {
+void applyLevelsFromMovingAverage(PriceState &state, float movingAvgPerKwh) {
   for (size_t i = 0; i < state.count; ++i) {
-    state.points[i].level = classifyLevelFromAverage(state.points[i].price, movingAvgKrPerKwh);
+    state.points[i].level = classifyLevelFromAverage(state.points[i].price, movingAvgPerKwh);
   }
 }
 
@@ -70,8 +74,11 @@ bool updateHistoryFromPoints(PriceState &state, MovingAverageStore &store) {
     if (!isIntervalKey(pointKey)) continue;
     if (isIntervalKey(lastPersisted) && pointKey <= lastPersisted) continue;  // already processed
 
+    if (!state.points[i].hasRawPrice) continue;
+
     // Include all available fetched points (today + tomorrow) in the rolling history.
-    addMovingAverageSample(store, state.points[i].price);
+    // Store raw market price so the configured formula can be applied later.
+    addMovingAverageSample(store, state.points[i].rawPricePerKwh);
     strncpy(store.lastSlotKey, pointKey.c_str(), sizeof(store.lastSlotKey) - 1);
     store.lastSlotKey[sizeof(store.lastSlotKey) - 1] = '\0';
     lastPersisted = pointKey;
@@ -80,7 +87,7 @@ bool updateHistoryFromPoints(PriceState &state, MovingAverageStore &store) {
   return changed;
 }
 
-bool addPoints(JsonArray arr, const char *area, float vatPercent, float fixedCostPerKwh, PriceState &state) {
+bool addPoints(JsonArray arr, const char *area, float vatPercent, float fixedCostMinorPerKwh, PriceState &state) {
   if (arr.isNull()) return false;
 
   bool added = false;
@@ -93,14 +100,16 @@ bool addPoints(JsonArray arr, const char *area, float vatPercent, float fixedCos
     const JsonVariant selected = entryPerArea[area];
     if (selected.isNull()) continue;
 
-    // Nord Pool index prices are in currency/MWh. Convert to kr/kWh.
+    // Nord Pool index prices are in currency/MWh. Convert to currency/kWh.
     const float nordPoolPricePerMwh = selected | 0.0f;
-    const float energyPriceKrPerKwh = nordPoolPricePerMwh / 1000.0f;
-    const float adjustedPrice = applyCustomPriceFormula(energyPriceKrPerKwh, vatPercent, fixedCostPerKwh);
+    const float energyPricePerKwh = nordPoolPricePerMwh / 1000.0f;
+    const float adjustedPrice = applyCustomPriceFormula(energyPricePerKwh, vatPercent, fixedCostMinorPerKwh);
 
     PricePoint &p = state.points[state.count++];
     p.startsAt = utcIsoToLocalIsoSlot(String((const char *)(item["deliveryStart"] | "")));
     p.price = adjustedPrice;
+    p.rawPricePerKwh = energyPricePerKwh;
+    p.hasRawPrice = true;
     p.level = "UNKNOWN";
     added = true;
   }
@@ -117,7 +126,7 @@ bool fetchDate(
     const char *currency,
     uint16_t resolutionMinutes,
     float vatPercent,
-    float fixedCostPerKwh,
+    float fixedCostMinorPerKwh,
     PriceState &out
 ) {
   const uint16_t normalizedResolution = normalizeResolutionMinutes(resolutionMinutes);
@@ -178,7 +187,7 @@ bool fetchDate(
     out.currency = String((const char *)(doc["currency"] | currency));
   }
 
-  addPoints(doc["multiIndexEntries"], area, vatPercent, fixedCostPerKwh, out);
+  addPoints(doc["multiIndexEntries"], area, vatPercent, fixedCostMinorPerKwh, out);
   return true;
 }
 
@@ -196,7 +205,7 @@ void assignCurrentLevel(PriceState &out) {
   out.currentLevel = out.points[out.currentIndex].level;
 }
 
-uint16_t applyMovingAverageToState(PriceState &state) {
+uint16_t applyMovingAverageToState(PriceState &state, float vatPercent, float fixedCostPerKwh) {
   if (state.count == 0) return 0;
 
   state.resolutionMinutes = normalizeResolutionMinutes(state.resolutionMinutes);
@@ -218,13 +227,19 @@ uint16_t applyMovingAverageToState(PriceState &state) {
     logf("Nord Pool moving average save failed");
   }
 
-  float movingAvgKrPerKwh =
-      store.count == 0 ? kDefaultMovingAverageKrPerKwh : movingAverageValue(store);
-  if (movingAvgKrPerKwh <= 0.0001f) movingAvgKrPerKwh = kDefaultMovingAverageKrPerKwh;
+  float movingAvgRawPerKwh =
+      store.count == 0 ? kDefaultMovingAveragePerKwh : movingAverageValue(store);
+  if (movingAvgRawPerKwh <= 0.0001f) movingAvgRawPerKwh = kDefaultMovingAveragePerKwh;
+
+  float movingAvgPerKwh = applyCustomPriceFormula(movingAvgRawPerKwh, vatPercent, fixedCostPerKwh);
+  if (movingAvgPerKwh <= 0.0001f) {
+    movingAvgPerKwh = applyCustomPriceFormula(kDefaultMovingAveragePerKwh, vatPercent, fixedCostPerKwh);
+  }
+  if (movingAvgPerKwh <= 0.0001f) movingAvgPerKwh = kDefaultMovingAveragePerKwh;
 
   state.hasRunningAverage = true;
-  state.runningAverage = movingAvgKrPerKwh;
-  applyLevelsFromMovingAverage(state, movingAvgKrPerKwh);
+  state.runningAverage = movingAvgPerKwh;
+  applyLevelsFromMovingAverage(state, movingAvgPerKwh);
 
   assignCurrentFromClock(state);
   if (state.currentIndex < 0) {
@@ -261,7 +276,10 @@ void fetchNordPoolPriceInfo(
 
   const float normalizedVatPercent = normalizeVatPercent(vatPercent);
   const float normalizedFixedCostPerKwh = normalizeFixedCostPerKwh(fixedCostPerKwh);
-  logf("Nord Pool formula: vat=%.2f%% fixed_kwh=%.4f", normalizedVatPercent, normalizedFixedCostPerKwh);
+  logf(
+      "Nord Pool formula: vat=%.2f%% fixed_minor_kwh=%.2f",
+      normalizedVatPercent,
+      normalizedFixedCostPerKwh);
 
   if (WiFi.status() != WL_CONNECTED) {
     out.error = "WiFi not connected";
@@ -326,7 +344,7 @@ void fetchNordPoolPriceInfo(
     return;
   }
 
-  const uint16_t sampleCount = applyMovingAverageToState(out);
+  const uint16_t sampleCount = applyMovingAverageToState(out, normalizedVatPercent, normalizedFixedCostPerKwh);
 
   out.ok = true;
   logf(
@@ -341,9 +359,43 @@ void fetchNordPoolPriceInfo(
   );
 }
 
-void nordPoolPreupdateMovingAverageFromPriceInfo(PriceState &state) {
+void nordPoolPreupdateMovingAverageFromPriceInfo(PriceState &state, float vatPercent, float fixedCostPerKwh) {
   if (state.source != "NORDPOOL" && state.source != "no wifi") return;
   if (!state.ok || state.count == 0) return;
 
-  (void)applyMovingAverageToState(state);
+  const float normalizedVatPercent = normalizeVatPercent(vatPercent);
+  const float normalizedFixedCostPerKwh = normalizeFixedCostPerKwh(fixedCostPerKwh);
+  (void)applyMovingAverageToState(state, normalizedVatPercent, normalizedFixedCostPerKwh);
+}
+
+bool nordPoolRecalculatePricesFromRaw(PriceState &state, float vatPercent, float fixedCostPerKwh) {
+  if (state.count == 0) return false;
+
+  const float normalizedVatPercent = normalizeVatPercent(vatPercent);
+  const float normalizedFixedCostPerKwh = normalizeFixedCostPerKwh(fixedCostPerKwh);
+
+  for (size_t i = 0; i < state.count; ++i) {
+    if (!state.points[i].hasRawPrice) {
+      logf("Nord Pool cache recalc skipped: missing raw price at idx=%u", (unsigned)i);
+      return false;
+    }
+  }
+
+  for (size_t i = 0; i < state.count; ++i) {
+    PricePoint &point = state.points[i];
+    point.price = applyCustomPriceFormula(point.rawPricePerKwh, normalizedVatPercent, normalizedFixedCostPerKwh);
+  }
+
+  if (state.ok) {
+    (void)applyMovingAverageToState(state, normalizedVatPercent, normalizedFixedCostPerKwh);
+  } else {
+    assignCurrentFromClock(state);
+    if (state.currentIndex < 0) {
+      state.currentIndex = 0;
+      state.currentStartsAt = state.points[0].startsAt;
+      state.currentPrice = state.points[0].price;
+    }
+    assignCurrentLevel(state);
+  }
+  return true;
 }

@@ -31,13 +31,13 @@ On boot, the device uses a WiFiManager portal to configure:
 - `NORDPOOL_CURRENCY` (dropdown): `SEK`, `EUR`, `NOK`, `DKK`
 - `NORDPOOL_RESOLUTION_MINUTES` (dropdown): `15`, `30`, `60`
 - `VAT_PERCENT` (number): VAT rate in percent (default `25`)
-- `TOTAL_FIXED_COST_PER_KWH` (number): total fixed cost in currency per kWh (default `0`)
+- `TOTAL_FIXED_COST_PER_KWH` (number): total fixed cost in minor currency units per kWh (default `0`)
 
 Runtime configuration is persisted in NVS and reused on future boots.
 
 Reset button:
 
-- Hold the configured reset button for 2 seconds to clear saved Wi-Fi and saved Nord Pool settings, then restart.
+- Hold the configured reset button for 2 seconds to clear saved Wi-Fi, saved Nord Pool settings, cached prices, and moving-average history, then restart.
 - Configure the button pin with `CONFIG_RESET_PIN` in `platformio.ini` (`-1` disables this feature).
 - Set `CONFIG_RESET_ACTIVE_LEVEL` to `LOW` (button to GND) or `HIGH` (button to 3V3).
 - Clock resync interval can be tuned with `CONFIG_CLOCK_RESYNC_INTERVAL_SEC` (default `21600`) and retry delay with `CONFIG_CLOCK_RESYNC_RETRY_SEC` (default `600`).
@@ -60,7 +60,10 @@ platformio device monitor -b 115200
 - Refreshes current interval state from local clock.
 - Fetches full price data again daily at 13:00 local time.
 - Retries every 30 seconds on fetch failure.
-- Applies configurable price calculation: `energy * (1 + VAT_PERCENT / 100) + TOTAL_FIXED_COST_PER_KWH` (currency/kWh).
+- Applies configurable price calculation in minor currency units, then converts to currency:
+  `((energy * 100) * (1 + VAT_PERCENT / 100) + TOTAL_FIXED_COST_PER_KWH) / 100`.
+- Cache stores raw energy prices and recalculates with current VAT/fixed settings before display.
+- Moving-average history stores raw energy prices and applies current VAT/fixed settings when calculating displayed levels.
 - Nord Pool level mapping uses ratio-based bands against a 72-hour moving average persisted in SPIFFS (`/nordpool_ma.bin`).
 
 ## Project Structure

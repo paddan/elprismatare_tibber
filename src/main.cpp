@@ -5,6 +5,7 @@
 #include "app_types.h"
 #include "display_ui.h"
 #include "logging_utils.h"
+#include "nordpool_ma_store.h"
 #include "nordpool_client.h"
 #include "price_cache.h"
 #include "price_state_utils.h"
@@ -87,7 +88,15 @@ void handleResetRequest()
   if (!resetButtonHeld())
     return;
 
-  logf("Reset button held, clearing WiFi/config settings");
+  logf("Reset button held, clearing WiFi/config settings, price cache, and moving average");
+  if (!priceCacheClear())
+  {
+    logf("Price cache clear failed during reset");
+  }
+  if (!clearMovingAverageStore())
+  {
+    logf("Moving average clear failed during reset");
+  }
   wifiResetSettings();
   delay(250);
   ESP.restart();
@@ -130,6 +139,39 @@ void syncClockAndPrimeSchedules()
   primeSchedulesFromNow(time(nullptr));
 }
 
+void logCurrentPriceCalculation(const PriceState &state, const AppSecrets &secrets)
+{
+  if (!state.ok || state.count == 0)
+    return;
+  if (state.currentIndex < 0 || state.currentIndex >= (int)state.count)
+    return;
+
+  const PricePoint &point = state.points[state.currentIndex];
+  if (!point.hasRawPrice)
+  {
+    logf(
+        "Current price calc: idx=%d slot=%s raw=n/a price=%.4f",
+        state.currentIndex,
+        point.startsAt.c_str(),
+        point.price);
+    return;
+  }
+
+  const float vatMultiplier = 1.0f + (secrets.vatPercent / 100.0f);
+  const float rawMinorPerKwh = point.rawPricePerKwh * 100.0f;
+  const float withVatMinorPerKwh = rawMinorPerKwh * vatMultiplier;
+  const float computedPricePerKwh = (withVatMinorPerKwh + secrets.fixedCostPerKwh) / 100.0f;
+  logf(
+      "Current price calc: idx=%d slot=%s raw=%.4f vat=%.2f%% fixed_minor=%.2f computed=%.4f stored=%.4f",
+      state.currentIndex,
+      point.startsAt.c_str(),
+      point.rawPricePerKwh,
+      secrets.vatPercent,
+      secrets.fixedCostPerKwh,
+      computedPricePerKwh,
+      point.price);
+}
+
 void applyFetchedState(const PriceState &fetched)
 {
   if (fetched.ok)
@@ -139,6 +181,7 @@ void applyFetchedState(const PriceState &fetched)
     {
       logf("Price cache save failed");
     }
+    logCurrentPriceCalculation(gState, gSecrets);
   }
   else if (gState.count > 0)
   {
@@ -184,10 +227,31 @@ bool applyLoadedCacheState(const PriceState &cacheState, const char *cacheLabel,
     logf("Price cache save failed");
   }
 
+  logCurrentPriceCalculation(gState, gSecrets);
+
   displayDrawPrices(gState);
   logf("Loaded %s prices from cache: points=%u", cacheLabel, (unsigned)gState.count);
   gPendingCatchUpRecheck = true;
   return true;
+}
+
+bool prepareNordPoolCacheForCurrentFormula(PriceState &cacheState)
+{
+  if (!cacheState.ok || cacheState.count == 0)
+  {
+    return false;
+  }
+  if (cacheState.source != "NORDPOOL" && cacheState.source != "no wifi")
+  {
+    return true;
+  }
+  if (nordPoolRecalculatePricesFromRaw(cacheState, gSecrets.vatPercent, gSecrets.fixedCostPerKwh))
+  {
+    return true;
+  }
+
+  logf("Cached Nord Pool prices cannot be recalculated with current formula; ignoring cache");
+  return false;
 }
 
 void updateCurrentIntervalFromClock(bool forceUpdate = false)
@@ -206,6 +270,7 @@ void updateCurrentIntervalFromClock(bool forceUpdate = false)
   gState.currentLevel = gState.points[idx].level;
   gState.currentPrice = gState.points[idx].price;
   logf("Price slot update: idx=%d price=%.3f", idx, gState.currentPrice);
+  logCurrentPriceCalculation(gState, gSecrets);
   displayDrawPrices(gState);
 }
 
@@ -336,7 +401,8 @@ void setup()
 
   if (!wifiConnected)
   {
-    if (priceCacheLoadIfAvailable(kActiveSourceLabel, gCacheBuffer))
+    if (priceCacheLoadIfAvailable(kActiveSourceLabel, gCacheBuffer) &&
+        prepareNordPoolCacheForCurrentFormula(gCacheBuffer))
     {
       gState = gCacheBuffer;
       gState.source = "no wifi";
@@ -357,11 +423,13 @@ void setup()
 
   syncClockAndPrimeSchedules();
 
-  if (priceCacheLoadIfCurrent(kActiveSourceLabel, gCacheBuffer))
+  if (priceCacheLoadIfCurrent(kActiveSourceLabel, gCacheBuffer) &&
+      prepareNordPoolCacheForCurrentFormula(gCacheBuffer))
   {
     loadedFromCache = applyLoadedCacheState(gCacheBuffer, "current", true);
   }
-  else if (priceCacheLoadIfAvailable(kActiveSourceLabel, gCacheBuffer))
+  else if (priceCacheLoadIfAvailable(kActiveSourceLabel, gCacheBuffer) &&
+           prepareNordPoolCacheForCurrentFormula(gCacheBuffer))
   {
     loadedFromCache = applyLoadedCacheState(gCacheBuffer, "available", false);
   }

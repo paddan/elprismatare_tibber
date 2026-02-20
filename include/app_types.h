@@ -8,6 +8,8 @@ struct PricePoint {
   String startsAt;
   String level;
   float price = 0.0f;
+  float rawPricePerKwh = 0.0f;
+  bool hasRawPrice = false;
 };
 
 struct PriceState {
