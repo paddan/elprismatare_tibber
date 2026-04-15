@@ -26,33 +26,67 @@ namespace
   // - Increase Y => move down, decrease Y => move up
   // - Increase W/H/font size => make larger
 
-  // Big price ("2.22 SEK") position and size.
-  constexpr int kScreenCenterX = 160; // Center X for the big price text.
-  constexpr int kPriceCenterY = 44;   // Center Y for the big price text.
-  constexpr int kPriceFontSize = 86;  // Big price font size (OpenFontRender pixels).
-  constexpr int kCurrencyFontSize = kPriceFontSize / 2;
-  constexpr int kPriceCurrencyGapPx = 8;
+#ifdef ILI9488_DRIVER
+  // 4.0" ILI9488 — 480x320 landscape
+  constexpr int kScreenCenterX        = 240;
+  constexpr int kPriceCenterY         = 55;
+  constexpr int kPriceFontSize        = 100;
+  constexpr int kCurrencyFontSize     = 40;
+  constexpr int kChartX               = 35;
+  constexpr int kChartY               = 125;
+  constexpr int kChartW               = 420;
+  constexpr int kChartH               = 165;
+  constexpr int kCurrentArrowHalfWidth = 5;
+  constexpr int kCurrentArrowHeight   = 16;
+  constexpr int kSourceLabelX         = 474;
+  constexpr int kErrorTitleY          = 93;
+  constexpr int kErrorDetailY         = 128;
+  constexpr int kWifiTitleY           = 28;
+  constexpr int kWifiStep1Y           = 77;
+  constexpr int kWifiApNameY          = 107;
+  constexpr int kWifiStep2Y           = 144;
+  constexpr int kWifiStep3Y           = 173;
+  constexpr int kWifiStep4aY          = 202;
+  constexpr int kWifiStep4bY          = 226;
+  constexpr int kWifiTimeoutY         = 258;
+  constexpr int kWifiToutTitleY       = 99;
+  constexpr int kWifiToutMsgY         = 144;
+  constexpr int kWifiToutRetryY       = 181;
+#else
+  // 2.8" ILI9341 — 320x240 landscape
+  constexpr int kScreenCenterX        = 160;
+  constexpr int kPriceCenterY         = 44;
+  constexpr int kPriceFontSize        = 86;
+  constexpr int kCurrencyFontSize     = 34;
+  constexpr int kChartX               = 30;
+  constexpr int kChartY               = 106;
+  constexpr int kChartW               = 286;
+  constexpr int kChartH               = 124;
+  constexpr int kCurrentArrowHalfWidth = 4;
+  constexpr int kCurrentArrowHeight   = 13;
+  constexpr int kSourceLabelX         = 316;
+  constexpr int kErrorTitleY          = 70;
+  constexpr int kErrorDetailY         = 96;
+  constexpr int kWifiTitleY           = 20;
+  constexpr int kWifiStep1Y           = 58;
+  constexpr int kWifiApNameY          = 80;
+  constexpr int kWifiStep2Y           = 108;
+  constexpr int kWifiStep3Y           = 130;
+  constexpr int kWifiStep4aY          = 152;
+  constexpr int kWifiStep4bY          = 170;
+  constexpr int kWifiTimeoutY         = 194;
+  constexpr int kWifiToutTitleY       = 74;
+  constexpr int kWifiToutMsgY         = 108;
+  constexpr int kWifiToutRetryY       = 136;
+#endif
 
-  // Chart rectangle (outer graph area).
-  constexpr int kChartX = 30;  // Left edge of graph area.
-  constexpr int kChartY = 106; // Top edge of graph area.
-  constexpr int kChartW = 286; // Graph width.
-  constexpr int kChartH = 124; // Graph height.
-
-  // Labels around the chart.
-  constexpr int kDayLabelY = kChartY - 13; // Date labels above graph (14/02, 15/02).
-  constexpr int kAxisLabelX = kChartX - 8; // Y-axis number labels to the left of graph.
-
-  // Current-interval arrow marker.
-  constexpr int kCurrentArrowHalfWidth = 4;          // Half arrow base width (full width = *2).
-  constexpr int kCurrentArrowHeight = 13;            // Arrow height.
-  constexpr uint16_t kCurrentArrowColor = TFT_WHITE; // Arrow color.
-
-  // Axis font sizes (TFT_eSPI bitmap fonts).
-  constexpr int kYAxisFontSize = 2;    // Y-axis labels/ticks text scale.
-  constexpr int kTopXAxisFontSize = 2; // Day labels text scale.
-  constexpr int kSourceLabelX = 316;
-  constexpr int kSourceLabelY = 2;
+  constexpr int kPriceCurrencyGapPx   = 8;
+  constexpr int kDayLabelY            = kChartY - 13;
+  constexpr int kAxisLabelX           = kChartX - 8;
+  constexpr uint16_t kCurrentArrowColor = TFT_WHITE;
+  constexpr int kYAxisFontSize        = 2;
+  constexpr int kTopXAxisFontSize     = 2;
+  constexpr int kSourceLabelY         = 2;
   constexpr uint16_t kAverageLineColor = TFT_CYAN;
 
   void formatPriceValue(float value, char *out, size_t outSize)
@@ -372,10 +406,10 @@ namespace
     tft.setTextDatum(MC_DATUM);
     tft.setTextColor(TFT_RED, TFT_BLACK);
     tft.setTextFont(4);
-    tft.drawString("Fetch failed", kScreenCenterX, 70);
+    tft.drawString("Fetch failed", kScreenCenterX, kErrorTitleY);
     tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
     tft.setTextFont(2);
-    tft.drawString(errorText, kScreenCenterX, 96);
+    tft.drawString(errorText, kScreenCenterX, kErrorDetailY);
   }
 
   void drawClockLabel()
@@ -547,6 +581,14 @@ namespace
   {
     drawCenteredLine(text.c_str(), y, font, color);
   }
+
+  void drawFetchErrorBanner()
+  {
+    tft.setTextFont(2);
+    tft.setTextColor(TFT_RED, TFT_BLACK);
+    tft.setTextDatum(TL_DATUM);
+    tft.drawString("Failed to contact Nordpool!", 4, kSourceLabelY + 5);
+  }
 } // namespace
 
 void displayInit()
@@ -575,6 +617,11 @@ void displayDrawPrices(const PriceState &state)
   {
     drawErrorScreen(state.error);
     return;
+  }
+
+  if (!state.error.isEmpty())
+  {
+    drawFetchErrorBanner();
   }
 
   if (state.count == 0)
@@ -618,14 +665,14 @@ void displayDrawWifiConfigPortal(const char *apName, uint16_t timeoutSeconds)
 
   tft.fillScreen(TFT_BLACK);
   tft.setTextWrap(false);
-  drawCenteredLine("Wi-Fi Setup Mode", 20, 4, TFT_CYAN);
-  drawCenteredLine("1) Connect phone/computer to:", 58, 2, TFT_LIGHTGREY);
-  drawCenteredLine(ap, 80, 2, TFT_WHITE);
-  drawCenteredLine("2) Open: 192.168.4.1", 108, 2, TFT_LIGHTGREY);
-  drawCenteredLine("3) Select Wi-Fi and Save", 130, 2, TFT_LIGHTGREY);
-  drawCenteredLine("4) Select Nord Pool area,", 152, 2, TFT_LIGHTGREY);
-  drawCenteredLine("   currency, and resolution", 170, 2, TFT_LIGHTGREY);
-  drawCenteredLine(timeoutBuf, 194, 2, TFT_YELLOW);
+  drawCenteredLine("Wi-Fi Setup Mode", kWifiTitleY, 4, TFT_CYAN);
+  drawCenteredLine("1) Connect phone/computer to:", kWifiStep1Y, 2, TFT_LIGHTGREY);
+  drawCenteredLine(ap, kWifiApNameY, 2, TFT_WHITE);
+  drawCenteredLine("2) Open: 192.168.4.1", kWifiStep2Y, 2, TFT_LIGHTGREY);
+  drawCenteredLine("3) Select Wi-Fi and Save", kWifiStep3Y, 2, TFT_LIGHTGREY);
+  drawCenteredLine("4) Select Nord Pool area,", kWifiStep4aY, 2, TFT_LIGHTGREY);
+  drawCenteredLine("   currency, and resolution", kWifiStep4bY, 2, TFT_LIGHTGREY);
+  drawCenteredLine(timeoutBuf, kWifiTimeoutY, 2, TFT_YELLOW);
 }
 
 void displayDrawWifiConfigTimeout(uint16_t timeoutSeconds)
@@ -635,7 +682,7 @@ void displayDrawWifiConfigTimeout(uint16_t timeoutSeconds)
 
   tft.fillScreen(TFT_BLACK);
   tft.setTextWrap(false);
-  drawCenteredLine("Wi-Fi Setup Timed Out", 74, 4, TFT_RED);
-  drawCenteredLine(timeoutBuf, 108, 2, TFT_LIGHTGREY);
-  drawCenteredLine("Press reset or reboot to retry", 136, 2, TFT_LIGHTGREY);
+  drawCenteredLine("Wi-Fi Setup Timed Out", kWifiToutTitleY, 4, TFT_RED);
+  drawCenteredLine(timeoutBuf, kWifiToutMsgY, 2, TFT_LIGHTGREY);
+  drawCenteredLine("Press reset or reboot to retry", kWifiToutRetryY, 2, TFT_LIGHTGREY);
 }

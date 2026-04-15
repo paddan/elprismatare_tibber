@@ -287,7 +287,7 @@ void fetchNordPoolPriceInfo(
   }
 
   const time_t now = time(nullptr);
-  if (now < 1700000000) {
+  if (now < kValidEpochMin) {
     out.error = "Clock not synced";
     return;
   }

@@ -159,7 +159,7 @@ String intervalKeyFromIso(const String &iso, uint16_t resolutionMinutes) {
 
 String currentIntervalKey(uint16_t resolutionMinutes) {
   time_t now = time(nullptr);
-  if (now < 1700000000) return "";
+  if (now < kValidEpochMin) return "";
 
   struct tm localTm;
   localtime_r(&now, &localTm);
@@ -242,7 +242,7 @@ void syncClock(const char *timezoneSpec) {
 }
 
 time_t scheduleNextDailyFetch(time_t now, int hour, int minute) {
-  if (now < 1700000000) return 0;
+  if (now < kValidEpochMin) return 0;
 
   struct tm tmNow;
   localtime_r(&now, &tmNow);

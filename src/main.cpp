@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
+#include <esp_idf_version.h>
+#include <esp_task_wdt.h>
 #include <time.h>
 
 #include "app_types.h"
@@ -15,15 +17,15 @@
 
 constexpr uint32_t kWifiConnectTimeoutMs = 20000;
 constexpr uint16_t kWifiPortalTimeoutSec = 120;
-constexpr uint32_t kRetryOnErrorMs = 30000;
+constexpr uint32_t kRetryOnErrorMinMs = 30000;   // 30 s — first retry after error
+constexpr uint32_t kRetryOnErrorMaxMs = 1800000; // 30 min — backoff ceiling
 constexpr time_t kRetryDailyIfUnchangedSec = 10 * 60;
 constexpr uint32_t kResetHoldMs = 2000;
 constexpr uint32_t kResetPollIntervalMs = 50;
 constexpr int kDailyFetchHour = 13;
 constexpr int kDailyFetchMinute = 0;
-constexpr char kNordPoolApiUrl[] = "https://dataportal-api.nordpoolgroup.com/api/DayAheadPriceIndices";
+constexpr uint32_t kWatchdogTimeoutMs = 60000; // 60 s — covers worst-case WiFi + 2 HTTP fetches
 constexpr char kActiveSourceLabel[] = "NORDPOOL";
-constexpr time_t kValidEpochMin = 1700000000;
 
 #ifndef CONFIG_CLOCK_RESYNC_INTERVAL_SEC
 #define CONFIG_CLOCK_RESYNC_INTERVAL_SEC (6 * 60 * 60)
@@ -51,6 +53,7 @@ PriceState gFetchBuffer;
 PriceState gCacheBuffer;
 AppSecrets gSecrets;
 uint32_t gLastFetchMs = 0;
+uint32_t gRetryIntervalMs = kRetryOnErrorMinMs;
 time_t gNextDailyFetch = 0;
 time_t gNextMinuteBoundary = 0;
 time_t gNextClockResync = 0;
@@ -176,6 +179,7 @@ void applyFetchedState(const PriceState &fetched)
 {
   if (fetched.ok)
   {
+    gRetryIntervalMs = kRetryOnErrorMinMs;
     gState = fetched;
     if (!priceCacheSave(gState))
     {
@@ -199,7 +203,7 @@ void fetchAndRender()
 {
   logf("Fetch+render start");
   fetchNordPoolPriceInfo(
-      kNordPoolApiUrl,
+      gSecrets.nordpoolApiUrl.c_str(),
       gSecrets.nordpoolArea.c_str(),
       gSecrets.nordpoolCurrency.c_str(),
       gSecrets.nordpoolResolutionMinutes,
@@ -330,7 +334,7 @@ void handleClockDrivenUpdates(time_t now)
   {
     logf("Daily 13:00 fetch trigger");
     fetchNordPoolPriceInfo(
-        kNordPoolApiUrl,
+        gSecrets.nordpoolApiUrl.c_str(),
         gSecrets.nordpoolArea.c_str(),
         gSecrets.nordpoolCurrency.c_str(),
         gSecrets.nordpoolResolutionMinutes,
@@ -394,7 +398,6 @@ void setup()
   handleResetRequest();
 
   displayInit();
-  loadAppSecrets(gSecrets);
 
   bool loadedFromCache = false;
   const bool wifiConnected = wifiConnectWithConfigPortal(gSecrets, kWifiPortalTimeoutSec);
@@ -448,10 +451,24 @@ void setup()
   }
 
   updateCurrentIntervalFromClock(true);
+
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+  const esp_task_wdt_config_t wdtConfig = {
+      .timeout_ms = kWatchdogTimeoutMs,
+      .idle_core_mask = 0,
+      .trigger_panic = true,
+  };
+  esp_task_wdt_reconfigure(&wdtConfig);
+#else
+  esp_task_wdt_init(kWatchdogTimeoutMs / 1000, true);
+#endif
+  esp_task_wdt_add(NULL);
+  logf("Watchdog started: %ums timeout", (unsigned)kWatchdogTimeoutMs);
 }
 
 void loop()
 {
+  esp_task_wdt_reset();
   handleResetRequest();
 
   if (WiFi.status() != WL_CONNECTED && !wifiReconnect(kWifiConnectTimeoutMs))
@@ -486,10 +503,15 @@ void loop()
     fetchAndRender();
   }
 
-  if (!gState.ok && millis() - gLastFetchMs >= kRetryOnErrorMs)
+  if (!gState.ok && millis() - gLastFetchMs >= gRetryIntervalMs)
   {
-    logf("Retry fetch due to error state");
+    logf("Retry fetch due to error state (interval=%us)", (unsigned)(gRetryIntervalMs / 1000));
     fetchAndRender();
+    if (!gState.ok)
+    {
+      gRetryIntervalMs = std::min(gRetryIntervalMs * 2, kRetryOnErrorMaxMs);
+      logf("Backoff: next retry in %us", (unsigned)(gRetryIntervalMs / 1000));
+    }
   }
 
   handleClockDrivenUpdates(time(nullptr));

@@ -1,16 +1,22 @@
 # nordpool-price-display
 
-ESP32 + 2.4" TFT electricity price display for Nord Pool.
+ESP32 electricity price display for Nord Pool.
 
 This project runs on a FireBeetle ESP32 and shows:
 - Current price as large text (`#.## SEK/NOK/EUR/...`) with color based on price level.
 - Price bars for today + tomorrow at 15/30/60-minute resolution.
 - Current interval with a white downward arrow marker.
+- A red error banner if the last Nord Pool fetch failed but old prices are still displayed.
 
 ## Hardware
 
 - ESP32 board: `FireBeetle-ESP32` (`board = firebeetle32`)
-- Display: 2.4" 240x320 TFT shield (ILI9341-style, 8-bit parallel bus)
+- Display: one of two supported options (select at build time):
+
+| Environment        | Display                                |
+|--------------------|----------------------------------------|
+| `ili9488_spi`      | 4.0" ILI9488, 480×320, SPI (default)  |
+| `ili9341_parallel` | 2.8" ILI9341, 320×240, 8-bit parallel |
 
 Wiring is documented in `WIRING.md`.
 
@@ -19,25 +25,29 @@ Wiring is documented in `WIRING.md`.
 - PlatformIO
 - Arduino framework
 - `TFT_eSPI`
+- `OpenFontRender`
 - `ArduinoJson`
-- Nord Pool Data Portal API (`https://dataportal-api.nordpoolgroup.com/api/DayAheadPriceIndices`)
+- `WiFiManager`
+- Nord Pool Data Portal API (configurable, default: `https://dataportal-api.nordpoolgroup.com/api/DayAheadPriceIndices`)
 
 ## Configuration
 
-On boot, the device uses a WiFiManager portal to configure:
+On boot, the device opens a WiFiManager portal (`ElMeter-<chipid>` / `192.168.4.1`) to configure:
 
-- Wi-Fi credentials
-- `NORDPOOL_AREA` (dropdown): `SE1`, `SE2`, `SE3`, `SE4`, `NO1`, `NO2`, `NO3`, `NO4`, `NO5`, `DK1`, `DK2`, `FI`, `EE`, `LV`, `LT`, `SYS`
-- `NORDPOOL_CURRENCY` (dropdown): `SEK`, `EUR`, `NOK`, `DKK`
-- `NORDPOOL_RESOLUTION_MINUTES` (dropdown): `15`, `30`, `60`
-- `VAT_PERCENT` (number): VAT rate in percent (default `25`)
-- `TOTAL_FIXED_COST_PER_KWH` (number): total fixed cost in minor currency units per kWh (default `0`)
+| Field | Description | Default |
+|-------|-------------|---------|
+| Nord Pool API URL | Full API endpoint URL | `https://dataportal-api.nordpoolgroup.com/api/DayAheadPriceIndices` |
+| Nord Pool area | Dropdown: `SE1`–`SE4`, `NO1`–`NO5`, `DK1`–`DK2`, `FI`, `EE`, `LV`, `LT`, `SYS` | `SE3` |
+| Currency | Dropdown: `SEK`, `EUR`, `NOK`, `DKK` | `SEK` |
+| Resolution (minutes) | Dropdown: `15`, `30`, `60` | `60` |
+| VAT (%) | VAT rate | `25` |
+| Total fixed cost / kWh (cents) | Fixed cost in minor currency units per kWh | `0` |
 
-Runtime configuration is persisted in NVS and reused on future boots.
+All settings are persisted in NVS and reused on future boots.
 
 Reset button:
 
-- Hold the configured reset button for 2 seconds to clear saved Wi-Fi, saved Nord Pool settings, cached prices, and moving-average history, then restart.
+- Hold the configured reset button for 2 seconds to clear saved Wi-Fi, Nord Pool settings, cached prices, and moving-average history, then restart.
 - Configure the button pin with `CONFIG_RESET_PIN` in `platformio.ini` (`-1` disables this feature).
 - Set `CONFIG_RESET_ACTIVE_LEVEL` to `LOW` (button to GND) or `HIGH` (button to 3V3).
 - Clock resync interval can be tuned with `CONFIG_CLOCK_RESYNC_INTERVAL_SEC` (default `21600`) and retry delay with `CONFIG_CLOCK_RESYNC_RETRY_SEC` (default `600`).
@@ -45,23 +55,32 @@ Reset button:
 ## Build And Upload
 
 ```bash
-platformio run -e wemos_d1_mini32_tft
-platformio run -e wemos_d1_mini32_tft -t upload
+# 4.0" ILI9488 SPI (default)
+platformio run -e ili9488_spi
+platformio run -e ili9488_spi -t upload
+
+# 2.8" ILI9341 parallel
+platformio run -e ili9341_parallel
+platformio run -e ili9341_parallel -t upload
+
+# Serial monitor
 platformio device monitor -b 115200
 ```
 
 ## Runtime Behavior
 
 - Connects to Wi-Fi at boot using saved credentials.
-- If Wi-Fi is unavailable, starts a WiFiManager AP/config portal (`ElMeter-<chipid>`) to configure Wi-Fi and Nord Pool settings.
-- While the portal is active, the TFT shows setup instructions (AP name + `192.168.4.1`).
-- Syncs time via NTP using timezone mapped from selected Nord Pool area (`SE/NO/DK/SYS -> CET/CEST`, `FI/EE/LV/LT -> EET/EEST`).
+- If Wi-Fi is unavailable, starts a WiFiManager AP/config portal to configure Wi-Fi and settings.
+- While the portal is active, the TFT shows setup instructions.
+- Syncs time via NTP using timezone mapped from selected Nord Pool area (`SE/NO/DK/SYS → CET/CEST`, `FI/EE/LV/LT → EET/EEST`).
 - Fetches Nord Pool price data at startup.
-- Refreshes current interval state from local clock.
+- Refreshes current interval state from local clock every minute.
 - Fetches full price data again daily at 13:00 local time.
-- Retries every 30 seconds on fetch failure.
-- Applies configurable price calculation in minor currency units, then converts to currency:
-  `((energy * 100) * (1 + VAT_PERCENT / 100) + TOTAL_FIXED_COST_PER_KWH) / 100`.
+- On fetch failure, retries with exponential backoff: 30 s → 60 s → ... → 30 min.
+- If old prices are still shown after a failed fetch, a red "Failed to contact Nordpool!" banner is displayed.
+- Hardware watchdog (60 s) reboots the device if the main loop stalls.
+- Applies configurable price formula in minor currency units, then converts to currency:
+  `((energy * 100) * (1 + VAT / 100) + fixed_cost_minor) / 100`.
 - Cache stores raw energy prices and recalculates with current VAT/fixed settings before display.
 - Moving-average history stores raw energy prices and applies current VAT/fixed settings when calculating displayed levels.
 - Nord Pool level mapping uses ratio-based bands against a 72-hour moving average persisted in SPIFFS (`/nordpool_ma.bin`).
@@ -79,6 +98,5 @@ platformio device monitor -b 115200
 
 ## Notes
 
-- Display reset uses `LCD_RST` on `GPIO27` (software-controlled reset pulse).
-- `LCD_RD` must be held HIGH at 3.3V.
-- If display remains white, verify wiring continuity and driver selection in `platformio.ini`.
+- SPIFFS reports a benign mount error on first boot after flashing — `SPIFFS.begin(true)` formats the partition automatically.
+- If the display stays white, verify wiring continuity and that the correct build environment is selected.

@@ -4,6 +4,7 @@
 #include <WString.h>
 
 struct AppSecrets {
+  String nordpoolApiUrl;
   String nordpoolArea;
   String nordpoolCurrency;
   uint16_t nordpoolResolutionMinutes = 60;

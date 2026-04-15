@@ -15,6 +15,7 @@
 namespace
 {
   constexpr char kPrefsNamespace[] = "elcfg";
+  constexpr char kApiUrlKey[] = "np_apiurl";
   constexpr char kAreaKey[] = "np_area";
   constexpr char kCurrencyKey[] = "np_curr";
   constexpr char kResolutionKey[] = "np_res";
@@ -22,6 +23,7 @@ namespace
   constexpr char kFixedCostPerKwhKey[] = "np_fixkwh";
   constexpr char kLegacyPriceMultiplierKey[] = "np_mult";
   constexpr char kLegacyFixedAddMinorUnitKey[] = "np_fixore";
+  constexpr char kDefaultNordpoolApiUrl[] = "https://dataportal-api.nordpoolgroup.com/api/DayAheadPriceIndices";
   constexpr char kDefaultNordpoolArea[] = "SE3";
   constexpr char kDefaultNordpoolCurrency[] = "SEK";
   constexpr uint16_t kDefaultNordpoolResolutionMinutes = 60;
@@ -33,6 +35,7 @@ namespace
   constexpr const char *kNordpoolCurrencies[] = {"SEK", "EUR", "NOK", "DKK"};
   constexpr size_t kNordpoolAreaCount = sizeof(kNordpoolAreas) / sizeof(kNordpoolAreas[0]);
   constexpr size_t kNordpoolCurrencyCount = sizeof(kNordpoolCurrencies) / sizeof(kNordpoolCurrencies[0]);
+  constexpr size_t kApiUrlMaxLen = 127;
   constexpr size_t kAreaMaxLen = 8;
   constexpr size_t kCurrencyMaxLen = 8;
   constexpr size_t kResolutionMaxLen = 4;
@@ -170,6 +173,9 @@ namespace
 
   void normalizeSecrets(AppSecrets &secrets)
   {
+    secrets.nordpoolApiUrl.trim();
+    if (secrets.nordpoolApiUrl.isEmpty())
+      secrets.nordpoolApiUrl = kDefaultNordpoolApiUrl;
     secrets.nordpoolArea =
         normalizeToken(secrets.nordpoolArea, kDefaultNordpoolArea, kAreaMaxLen, kNordpoolAreas, kNordpoolAreaCount);
     secrets.nordpoolCurrency = normalizeToken(
@@ -206,6 +212,7 @@ namespace
       logf("Secrets save failed: prefs begin");
       return;
     }
+    prefs.putString(kApiUrlKey, secrets.nordpoolApiUrl);
     prefs.putString(kAreaKey, secrets.nordpoolArea);
     prefs.putString(kCurrencyKey, secrets.nordpoolCurrency);
     prefs.putUShort(kResolutionKey, secrets.nordpoolResolutionMinutes);
@@ -225,6 +232,7 @@ namespace
 
 void loadAppSecrets(AppSecrets &out)
 {
+  out.nordpoolApiUrl = kDefaultNordpoolApiUrl;
   out.nordpoolArea = kDefaultNordpoolArea;
   out.nordpoolCurrency = kDefaultNordpoolCurrency;
   out.nordpoolResolutionMinutes = kDefaultNordpoolResolutionMinutes;
@@ -234,6 +242,7 @@ void loadAppSecrets(AppSecrets &out)
   Preferences prefs;
   if (prefs.begin(kPrefsNamespace, true))
   {
+    out.nordpoolApiUrl = prefs.getString(kApiUrlKey, out.nordpoolApiUrl);
     out.nordpoolArea = prefs.getString(kAreaKey, out.nordpoolArea);
     out.nordpoolCurrency = prefs.getString(kCurrencyKey, out.nordpoolCurrency);
     out.nordpoolResolutionMinutes = prefs.getUShort(kResolutionKey, out.nordpoolResolutionMinutes);
@@ -272,11 +281,13 @@ bool wifiConnectWithConfigPortal(AppSecrets &secrets, uint16_t portalTimeoutSeco
 
   WiFi.mode(WIFI_STA);
 
+  char apiUrlBuffer[kApiUrlMaxLen + 1];
   char areaBuffer[kAreaMaxLen + 1];
   char currencyBuffer[kCurrencyMaxLen + 1];
   char resolutionBuffer[kResolutionMaxLen + 1];
   char vatPercentBuffer[kVatPercentMaxLen + 1];
   char fixedCostPerKwhBuffer[kFixedCostPerKwhMaxLen + 1];
+  secrets.nordpoolApiUrl.toCharArray(apiUrlBuffer, sizeof(apiUrlBuffer));
   secrets.nordpoolArea.toCharArray(areaBuffer, sizeof(areaBuffer));
   secrets.nordpoolCurrency.toCharArray(currencyBuffer, sizeof(currencyBuffer));
   snprintf(resolutionBuffer, sizeof(resolutionBuffer), "%u", (unsigned)secrets.nordpoolResolutionMinutes);
@@ -284,6 +295,7 @@ bool wifiConnectWithConfigPortal(AppSecrets &secrets, uint16_t portalTimeoutSeco
   snprintf(fixedCostPerKwhBuffer, sizeof(fixedCostPerKwhBuffer), "%.4f", secrets.fixedCostPerKwh);
 
   WiFiManager wifiManager;
+  WiFiManagerParameter apiUrlParam("NordPoolApiUrl", "Nord Pool API URL:", apiUrlBuffer, sizeof(apiUrlBuffer));
   WiFiManagerParameter areaParam("NordPoolArea", "Nord Pool area:", areaBuffer, sizeof(areaBuffer));
   WiFiManagerParameter currencyParam("NordPoolCurrency", "currency:", currencyBuffer, sizeof(currencyBuffer));
   WiFiManagerParameter resolutionParam(
@@ -303,6 +315,7 @@ bool wifiConnectWithConfigPortal(AppSecrets &secrets, uint16_t portalTimeoutSeco
       sizeof(fixedCostPerKwhBuffer));
 
   gSaveConfigRequested = false;
+  wifiManager.addParameter(&apiUrlParam);
   wifiManager.addParameter(&areaParam);
   wifiManager.addParameter(&currencyParam);
   wifiManager.addParameter(&resolutionParam);
@@ -331,6 +344,7 @@ bool wifiConnectWithConfigPortal(AppSecrets &secrets, uint16_t portalTimeoutSeco
 
   if (gSaveConfigRequested)
   {
+    secrets.nordpoolApiUrl = String(apiUrlParam.getValue());
     secrets.nordpoolArea = String(areaParam.getValue());
     secrets.nordpoolCurrency = String(currencyParam.getValue());
     secrets.nordpoolResolutionMinutes = parseResolutionToken(String(resolutionParam.getValue()));
