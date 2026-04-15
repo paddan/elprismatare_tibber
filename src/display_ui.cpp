@@ -35,9 +35,9 @@ namespace
   constexpr int kChartX               = 35;
   constexpr int kChartY               = 125;
   constexpr int kChartW               = 420;
-  constexpr int kChartH               = 165;
-  constexpr int kCurrentArrowHalfWidth = 5;
-  constexpr int kCurrentArrowHeight   = 16;
+  constexpr int kChartH               = 185;
+  constexpr int kCurrentArrowHalfWidth = 3;
+  constexpr int kCurrentArrowHeight   = 10;
   constexpr int kSourceLabelX         = 474;
   constexpr int kErrorTitleY          = 93;
   constexpr int kErrorDetailY         = 128;
@@ -61,9 +61,9 @@ namespace
   constexpr int kChartX               = 30;
   constexpr int kChartY               = 106;
   constexpr int kChartW               = 286;
-  constexpr int kChartH               = 124;
-  constexpr int kCurrentArrowHalfWidth = 4;
-  constexpr int kCurrentArrowHeight   = 13;
+  constexpr int kChartH               = 126;
+  constexpr int kCurrentArrowHalfWidth = 3;
+  constexpr int kCurrentArrowHeight   = 9;
   constexpr int kSourceLabelX         = 316;
   constexpr int kErrorTitleY          = 70;
   constexpr int kErrorDetailY         = 96;
@@ -81,7 +81,7 @@ namespace
 #endif
 
   constexpr int kPriceCurrencyGapPx   = 8;
-  constexpr int kDayLabelY            = kChartY - 13;
+  constexpr int kDayLabelY            = kChartY - 20;
   constexpr int kAxisLabelX           = kChartX - 8;
   constexpr uint16_t kCurrentArrowColor = TFT_WHITE;
   constexpr int kYAxisFontSize        = 2;
@@ -519,6 +519,23 @@ namespace
         kCurrentArrowColor);
   }
 
+  void drawCurrentMarker(const PriceState &state, const ChartRange &range, int xAxisY, int drawableH)
+  {
+    if (state.currentIndex < 0 || state.currentIndex >= (int)state.count)
+      return;
+    const int pointCount = (int)state.count;
+    const int i = state.currentIndex;
+    const int x0 = kChartX + (((int)i * kChartW) / pointCount);
+    const int x1 = kChartX + ((((int)i + 1) * kChartW) / pointCount);
+    const int w = max(1, x1 - x0);
+    const int y = priceToY(state.points[i].price, range, xAxisY, drawableH);
+    // Thin pointer line from chart top down to bar top; arrow is drawn on top.
+    const int centerX = x0 + (w / 2);
+    const int lineEnd = max(y - 1, kChartY);
+    tft.drawFastVLine(centerX, kChartY, lineEnd - kChartY + 1, kCurrentArrowColor);
+    drawCurrentArrow(x0, w, y);
+  }
+
   void drawBars(const PriceState &state, const ChartRange &range, const LevelBand bands[5], int xAxisY, int drawableH)
   {
     char lastDay[11] = {0};
@@ -537,11 +554,6 @@ namespace
       if (h > 0)
       {
         tft.fillRect(x, y, w, h, barGradientColor(p, bands, range));
-      }
-
-      if ((int)i == state.currentIndex)
-      {
-        drawCurrentArrow(x, w, y);
       }
 
       if (p.startsAt.length() < 10)
@@ -565,8 +577,63 @@ namespace
       dayText[5] = '\0';
       tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
       tft.setTextFont(kTopXAxisFontSize);
+      tft.setTextDatum(TC_DATUM);
       tft.drawString(dayText, x, kDayLabelY);
+      tft.setTextDatum(TL_DATUM);
     }
+  }
+
+  void drawXAxisTicks(const PriceState &state)
+  {
+    if (state.count == 0)
+      return;
+
+    const int pointCount = (int)state.count;
+    // Ticks hang down from the top interior edge of the chart.
+    const int tickTopY = kChartY;
+    // Labels sit just above the chart top border (2 px gap before border at kChartY-1).
+    const int labelY = tickTopY - 10;
+
+    tft.setTextFont(1);
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    tft.setTextDatum(TC_DATUM);
+
+    for (size_t i = 0; i < state.count; ++i)
+    {
+      const PricePoint &p = state.points[i];
+      if (p.startsAt.length() < 16)
+        continue;
+      const char *s = p.startsAt.c_str();
+      if (s[10] != 'T')
+        continue;
+
+      const int hour   = (s[11] - '0') * 10 + (s[12] - '0');
+      const int minute = (s[14] - '0') * 10 + (s[15] - '0');
+      if (minute != 0)
+        continue;
+
+      const int x = kChartX + (((int)i * kChartW) / pointCount);
+      const bool isMajor = (hour % 6 == 0);
+
+      if (isMajor)
+      {
+        // Tall tick hanging down from top of chart.
+        tft.drawFastVLine(x, tickTopY, 8, TFT_LIGHTGREY);
+        if (hour != 0)  // Skip "00" — date label is shown at that position
+        {
+          char label[3];
+          snprintf(label, sizeof(label), "%02d", hour);
+          tft.drawString(label, x, labelY);
+        }
+      }
+      else
+      {
+        // Short tick hanging down from top of chart.
+        tft.drawFastVLine(x, tickTopY, 4, TFT_LIGHTGREY);
+      }
+    }
+
+    tft.setTextDatum(TL_DATUM);
   }
 
   void drawCenteredLine(const char *text, int y, int font, uint16_t color)
@@ -649,7 +716,9 @@ void displayDrawPrices(const PriceState &state)
   tft.drawFastHLine(kChartX, xAxisY, kChartW, TFT_DARKGREY);
   drawYAxis(range, xAxisY, drawableH);
   drawBars(state, range, bands, xAxisY, drawableH);
+  drawXAxisTicks(state);
   drawRunningAverage(state, range, xAxisY, drawableH);
+  drawCurrentMarker(state, range, xAxisY, drawableH);
 }
 
 void displayRefreshClock()
