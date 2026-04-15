@@ -294,7 +294,22 @@ void fetchNordPoolPriceInfo(
 
   char today[16];
   char tomorrow[16];
-  if (!formatDateYmd(now, today, sizeof(today)) || !formatDateYmd(now + 24 * 3600, tomorrow, sizeof(tomorrow))) {
+  if (!formatDateYmd(now, today, sizeof(today))) {
+    out.error = "Date format failed";
+    return;
+  }
+
+  struct tm tmTomorrow;
+  if (!localtime_r(&now, &tmTomorrow)) {
+    out.error = "Date format failed";
+    return;
+  }
+  tmTomorrow.tm_mday += 1;
+  tmTomorrow.tm_hour = 0;
+  tmTomorrow.tm_min = 0;
+  tmTomorrow.tm_sec = 0;
+  const time_t tomorrowTs = mktime(&tmTomorrow);
+  if (tomorrowTs == (time_t)-1 || !formatDateYmd(tomorrowTs, tomorrow, sizeof(tomorrow))) {
     out.error = "Date format failed";
     return;
   }

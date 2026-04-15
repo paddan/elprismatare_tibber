@@ -244,13 +244,18 @@ void syncClock(const char *timezoneSpec) {
 time_t scheduleNextDailyFetch(time_t now, int hour, int minute) {
   if (now < kValidEpochMin) return 0;
 
-  struct tm tmNow;
-  localtime_r(&now, &tmNow);
-  tmNow.tm_hour = hour;
-  tmNow.tm_min = minute;
-  tmNow.tm_sec = 0;
+  struct tm tmTarget;
+  if (!localtime_r(&now, &tmTarget)) return 0;
+  tmTarget.tm_hour = hour;
+  tmTarget.tm_min = minute;
+  tmTarget.tm_sec = 0;
 
-  time_t next = mktime(&tmNow);
-  if (next <= now) next += 24 * 3600;
+  time_t next = mktime(&tmTarget);
+  if (next == (time_t)-1) return 0;
+  if (next <= now) {
+    tmTarget.tm_mday += 1;
+    next = mktime(&tmTarget);
+    if (next == (time_t)-1) return 0;
+  }
   return next;
 }

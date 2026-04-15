@@ -59,6 +59,7 @@ time_t gNextMinuteBoundary = 0;
 time_t gNextClockResync = 0;
 bool gPendingCatchUpRecheck = false;
 bool gNeedsOnlineInit = false;
+bool gWatchdogInitialized = false;
 
 constexpr int kConfigResetPin = CONFIG_RESET_PIN;
 constexpr int kConfigResetActiveLevel = CONFIG_RESET_ACTIVE_LEVEL;
@@ -140,6 +141,26 @@ void syncClockAndPrimeSchedules()
 {
   syncClockForSelectedArea();
   primeSchedulesFromNow(time(nullptr));
+}
+
+void initWatchdog()
+{
+  if (gWatchdogInitialized)
+    return;
+
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+  const esp_task_wdt_config_t wdtConfig = {
+      .timeout_ms = kWatchdogTimeoutMs,
+      .idle_core_mask = 0,
+      .trigger_panic = true,
+  };
+  esp_task_wdt_reconfigure(&wdtConfig);
+#else
+  esp_task_wdt_init(kWatchdogTimeoutMs / 1000, true);
+#endif
+  esp_task_wdt_add(NULL);
+  gWatchdogInitialized = true;
+  logf("Watchdog started: %ums timeout", (unsigned)kWatchdogTimeoutMs);
 }
 
 void logCurrentPriceCalculation(const PriceState &state, const AppSecrets &secrets)
@@ -263,9 +284,18 @@ void updateCurrentIntervalFromClock(bool forceUpdate = false)
   if (!gState.ok || gState.count == 0)
     return;
 
-  const int idx = findCurrentPricePointIndex(gState, gSecrets.nordpoolResolutionMinutes);
+  // Use the active state resolution (cache/fetched) instead of configured resolution.
+  // This avoids missing interval matches after restart when cached data resolution differs.
+  const uint16_t activeResolution = normalizeResolutionMinutes(gState.resolutionMinutes);
+  const int idx = findCurrentPricePointIndex(gState, activeResolution);
   if (idx < 0)
+  {
+    logf(
+        "Price slot update skipped: no matching interval (res=%u points=%u)",
+        (unsigned)activeResolution,
+        (unsigned)gState.count);
     return;
+  }
   if (!forceUpdate && idx == gState.currentIndex)
     return;
 
@@ -400,6 +430,7 @@ void setup()
   displayInit();
 
   bool loadedFromCache = false;
+  bool loadedCurrentCache = false;
   const bool wifiConnected = wifiConnectWithConfigPortal(gSecrets, kWifiPortalTimeoutSec);
 
   if (!wifiConnected)
@@ -413,6 +444,7 @@ void setup()
       updateCurrentIntervalFromClock(true);
       logf("No WiFi at boot, loaded prices from cache: points=%u", (unsigned)gState.count);
       gNeedsOnlineInit = true;
+      initWatchdog();
       return;
     }
 
@@ -421,6 +453,7 @@ void setup()
     gState.error = "no wifi";
     displayDrawPrices(gState);
     gNeedsOnlineInit = true;
+    initWatchdog();
     return;
   }
 
@@ -430,6 +463,7 @@ void setup()
       prepareNordPoolCacheForCurrentFormula(gCacheBuffer))
   {
     loadedFromCache = applyLoadedCacheState(gCacheBuffer, "current", true);
+    loadedCurrentCache = loadedFromCache;
   }
   else if (priceCacheLoadIfAvailable(kActiveSourceLabel, gCacheBuffer) &&
            prepareNordPoolCacheForCurrentFormula(gCacheBuffer))
@@ -437,8 +471,12 @@ void setup()
     loadedFromCache = applyLoadedCacheState(gCacheBuffer, "available", false);
   }
 
-  if (!loadedFromCache)
+  if (!loadedFromCache || !loadedCurrentCache)
   {
+    if (loadedFromCache && !loadedCurrentCache)
+    {
+      logf("Available cache loaded without current interval coverage; fetching fresh prices now");
+    }
     fetchAndRender();
   }
 
@@ -451,19 +489,7 @@ void setup()
   }
 
   updateCurrentIntervalFromClock(true);
-
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
-  const esp_task_wdt_config_t wdtConfig = {
-      .timeout_ms = kWatchdogTimeoutMs,
-      .idle_core_mask = 0,
-      .trigger_panic = true,
-  };
-  esp_task_wdt_reconfigure(&wdtConfig);
-#else
-  esp_task_wdt_init(kWatchdogTimeoutMs / 1000, true);
-#endif
-  esp_task_wdt_add(NULL);
-  logf("Watchdog started: %ums timeout", (unsigned)kWatchdogTimeoutMs);
+  initWatchdog();
 }
 
 void loop()
@@ -471,7 +497,8 @@ void loop()
   esp_task_wdt_reset();
   handleResetRequest();
 
-  if (WiFi.status() != WL_CONNECTED && !wifiReconnect(kWifiConnectTimeoutMs))
+  const bool wifiConnected = (WiFi.status() == WL_CONNECTED) || wifiReconnect(kWifiConnectTimeoutMs);
+  if (!wifiConnected)
   {
     if (gState.ok)
     {
@@ -491,10 +518,9 @@ void loop()
         displayDrawPrices(gState);
       }
     }
-    return;
   }
 
-  if (gNeedsOnlineInit && WiFi.status() == WL_CONNECTED)
+  if (wifiConnected && gNeedsOnlineInit)
   {
     logf("WiFi restored, running online init");
     gNeedsOnlineInit = false;
@@ -503,11 +529,12 @@ void loop()
     fetchAndRender();
   }
 
-  if (!gState.ok && millis() - gLastFetchMs >= gRetryIntervalMs)
+  const bool hasFetchError = !gState.error.isEmpty();
+  if (wifiConnected && (!gState.ok || hasFetchError) && millis() - gLastFetchMs >= gRetryIntervalMs)
   {
     logf("Retry fetch due to error state (interval=%us)", (unsigned)(gRetryIntervalMs / 1000));
     fetchAndRender();
-    if (!gState.ok)
+    if (!gState.ok || !gState.error.isEmpty())
     {
       gRetryIntervalMs = std::min(gRetryIntervalMs * 2, kRetryOnErrorMaxMs);
       logf("Backoff: next retry in %us", (unsigned)(gRetryIntervalMs / 1000));
